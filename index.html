@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QS run Analyzer</title>
+
+<!-- Third-party libraries -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bpx-forest-deep: #1B5E20;
+    --bpx-forest-mid:  #2E7D32;
+    --bpx-forest-light:#E8F5E9;
+    --bpx-teal:        #1B7A8C;
+    --bpx-teal-hover:  #145E6C;
+    --bpx-teal-dim:    #E3EEF0;
+    --bpx-navy:        #12313F;
+    --bpx-bg:          #F5F6F8;
+    --bpx-panel:       #FFFFFF;
+    --bpx-line:        #DDE1E6;
+    --bpx-ink:         #1B2229;
+    --bpx-muted:       #657080;
+    --bpx-red:         #C0392B;
+    --bpx-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --bpx-font-mono: "IBM Plex Mono", Consolas, Menlo, monospace;
+    --bpx-radius-sm: 4px;
+    --bpx-radius-md: 8px;
+    --bpx-radius-lg: 10px;
+    --bpx-shadow-sm: 0 1px 3px rgba(18, 49, 63, 0.05);
+    --bpx-shadow-md: 0 4px 12px rgba(18, 49, 63, 0.08);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bpx-bg); color: var(--bpx-ink);
+    font-family: var(--bpx-font-sans); -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 24px 20px 80px; }
+  .wrap { max-width: 1360px; margin: 0 auto; }
+
+  header.brand-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--bpx-line);
+  }
+  .brand-logo-area { display: flex; align-items: center; gap: 16px; }
+  .brand-logo-area img { height: 38px; width: auto; }
+  .brand-title h1 {
+    font-size: 22px; margin: 0; font-weight: 700; color: var(--bpx-navy); letter-spacing: -0.02em;
+  }
+  .brand-title p { margin: 2px 0 0; color: var(--bpx-muted); font-size: 13.5px; }
+
+  .dropzone {
+    border: 1.5px dashed #B2BEC8; border-radius: var(--bpx-radius-lg); background: var(--bpx-panel);
+    padding: 26px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+    box-shadow: var(--bpx-shadow-sm);
+  }
+  .dropzone.drag { border-color: var(--bpx-forest-mid); background: var(--bpx-forest-light); }
+  .dropzone strong { color: var(--bpx-forest-deep); font-size: 15px; }
+  .dropzone .hint { color: var(--bpx-muted); font-size: 13px; margin-top: 4px; }
+  .dropzone input { display: none; }
+
+  .global-bar {
+    display: none; justify-content: space-between; align-items: center;
+    background: var(--bpx-panel); border: 1px solid var(--bpx-line); border-radius: var(--bpx-radius-md);
+    padding: 12px 18px; margin-top: 16px; box-shadow: var(--bpx-shadow-sm);
+  }
+  .global-bar span { font-size: 13.5px; font-weight: 600; color: var(--bpx-navy); }
+
+  button, .btn {
+    font-family: var(--bpx-font-sans); font-size: 13px; font-weight: 600; border-radius: var(--bpx-radius-sm);
+    border: 1px solid var(--bpx-forest-deep); background: var(--bpx-forest-deep); color: #fff;
+    padding: 7px 14px; cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s;
+  }
+  button:hover { background: var(--bpx-forest-mid); border-color: var(--bpx-forest-mid); }
+  button.accent { background: var(--bpx-teal); border-color: var(--bpx-teal); }
+  button.accent:hover { background: var(--bpx-teal-hover); border-color: var(--bpx-teal-hover); }
+  button.secondary { background: #fff; color: var(--bpx-forest-deep); border-color: var(--bpx-forest-deep); }
+  button.secondary:hover { background: var(--bpx-forest-light); }
+  button:disabled { opacity: .5; cursor: default; }
+
+  #pipelineSection {
+    display: none; margin-top: 24px; background: var(--bpx-panel); border: 1px solid var(--bpx-line);
+    border-radius: var(--bpx-radius-lg); overflow: hidden; box-shadow: var(--bpx-shadow-md);
+  }
+  .pipeline-header {
+    background: #FAFBFC; padding: 14px 20px; border-bottom: 1px solid var(--bpx-line);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .pipeline-header h2 { margin: 0; font-size: 16px; color: var(--bpx-navy); font-weight: 700; }
+
+  .pipeline-grid {
+    display: grid; grid-template-columns: 290px 1fr; min-height: 600px;
+  }
+  @media(max-width: 960px) { .pipeline-grid { grid-template-columns: 1fr; } }
+
+  .pipeline-sidebar {
+    background: #FDFDFE; border-right: 1px solid var(--bpx-line); padding: 18px 16px;
+    display: flex; flex-direction: column; gap: 14px; overflow-y: auto;
+  }
+  .pipeline-sidebar label { font-size: 12px; font-weight: 650; color: var(--bpx-navy); margin-bottom: 4px; display: block; }
+  .pipeline-sidebar select, .pipeline-sidebar input[type="number"] {
+    width: 100%; border: 1px solid var(--bpx-line); border-radius: var(--bpx-radius-sm); padding: 6px 8px; font-size: 12.5px;
+    color: var(--bpx-ink); background: #fff;
+  }
+  .pipeline-sidebar select[multiple] { height: 95px; }
+
+  .pipeline-panel { padding: 18px 20px; display: flex; flex-direction: column; gap: 16px; }
+  .tabs { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--bpx-line); padding-bottom: 8px; }
+  .tab-group { display: flex; gap: 8px; }
+  .tab-btn {
+    background: #ECEFF1; border: none; color: var(--bpx-muted); padding: 6px 14px; border-radius: var(--bpx-radius-sm);
+    cursor: pointer; font-size: 13px; font-weight: 600; transition: background .12s, color .12s;
+  }
+  .tab-btn.active { background: var(--bpx-forest-deep); color: #fff; }
+
+  #plotCanvas { width: 100%; min-height: 520px; }
+
+  #runs { margin-top: 24px; display: flex; flex-direction: column; gap: 20px; }
+  .run { background: var(--bpx-panel); border: 1px solid var(--bpx-line); border-radius: var(--bpx-radius-md); overflow: hidden; box-shadow: var(--bpx-shadow-sm); }
+  .run-head {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+    padding: 14px 18px; border-bottom: 1px solid var(--bpx-line); background: #FAFBFD;
+  }
+  .run-head h3 { margin: 0 0 6px; font-size: 15px; color: var(--bpx-navy); font-weight: 700; }
+  .meta-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 4px 16px;
+    font-size: 12px; color: var(--bpx-muted);
+  }
+  .meta-grid span { color: var(--bpx-ink); font-weight: 600; }
+  .table-scroll { max-height: 280px; overflow: auto; border-top: 1px solid var(--bpx-line); }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  thead th { position: sticky; top: 0; background: #F3F5F7; text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--bpx-line); font-weight: 650; color: var(--bpx-navy); }
+  tbody td { padding: 6px 12px; border-bottom: 1px solid #EEF0F2; white-space: nowrap; font-family: var(--bpx-font-mono); }
+  tbody td.txt { font-family: var(--bpx-font-sans); }
+  tbody tr:hover { background: #FAFBFD; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="brand-header">
+    <div class="brand-logo-area">
+      <img src="https://biopathogenix.com/wp-content/uploads/2021/07/BioPathogenix-Horizontal-1.svg" alt="BioPathogenix Logo" onerror="this.style.display='none'">
+      <div class="brand-title">
+        <h1>BioPathogenix qPCR & EDS Analyzer</h1>
+        <p>Diagnostic analysis suite for QuantStudio runs and dynamic threshold calculation</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="dropzone" id="dropzone">
+    <strong>Drop .eds files here</strong> or click to choose
+    <div class="hint">Compatible with QuantStudio base instruments, QuantStudio 5, and all modular blocks</div>
+    <input type="file" id="fileInput" accept=".eds" multiple>
+  </div>
+
+  <div class="global-bar" id="globalBar">
+    <span id="globalSummary">0 files processed</span>
+    <button id="downloadAllBtn">Download All CSVs (Target, Sample, Cq)</button>
+  </div>
+
+  <div id="pipelineSection">
+    <div class="pipeline-header">
+      <h2>Interactive Run Analysis & Dynamic Thresholding</h2>
+      <div style="display: flex; gap: 8px;">
+        <button class="secondary" id="exportPlotImgBtn">Export Plot as PNG</button>
+        <button class="secondary" id="exportExcelBtn">Export Summary to Excel</button>
+      </div>
+    </div>
+    <div class="pipeline-grid">
+      <div class="pipeline-sidebar">
+        <div>
+          <label for="runSelector">Select Run File:</label>
+          <select id="runSelector"></select>
+        </div>
+        <div>
+          <label for="targetSelector">Targets:</label>
+          <select id="targetSelector" multiple></select>
+        </div>
+        <div>
+          <label for="sampleSelector">Samples:</label>
+          <select id="sampleSelector" multiple></select>
+        </div>
+        <hr style="border:0;border-top:1px solid var(--bpx-line);margin:2px 0;">
+        <div>
+          <label>Color By:</label>
+          <label style="font-weight:400;"><input type="radio" name="colorBy" value="target" checked> Target</label>
+          <label style="font-weight:400;"><input type="radio" name="colorBy" value="sample"> Sample</label>
+        </div>
+        <div>
+          <label>Plot Mode:</label>
+          <label style="font-weight:400;"><input type="radio" name="plotMode" value="all" checked> All Replicates</label>
+          <label style="font-weight:400;"><input type="radio" name="plotMode" value="average"> Average Curves</label>
+        </div>
+        <hr style="border:0;border-top:1px solid var(--bpx-line);margin:2px 0;">
+        <div>
+          <label style="font-weight:600;"><input type="checkbox" id="filterByCtCheck"> Filter by Ct &lt; 34</label>
+        </div>
+        <div>
+          <label for="dynamicThreshold">dRn Threshold (or drag line):</label>
+          <input type="number" id="dynamicThreshold" value="1000" step="50">
+          <button class="accent" id="autoThresholdBtn" style="width:100%;margin-top:6px;padding:5px;">⚡ Auto-Calculate Threshold</button>
+        </div>
+        <div>
+          <label style="font-weight:400;"><input type="checkbox" id="logScaleToggle"> Logarithmic Y-axis</label>
+        </div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="tabs">
+          <div class="tab-group">
+            <button class="tab-btn active" data-tab="plot">Amplification Curves</button>
+            <button class="tab-btn" data-tab="table">Calculated Ct Table</button>
+          </div>
+          <span style="font-size: 11.5px; color: var(--bpx-muted);">Tip: Drag the dashed red threshold line on the plot to adjust threshold values interactively</span>
+        </div>
+        <div id="plotView">
+          <div id="plotCanvas"></div>
+        </div>
+        <div id="tableView" style="display:none;">
+          <div class="table-scroll">
+            <table id="pipelineDataTable">
+              <thead><tr><th>Target</th><th class="txt">Sample</th><th>Cq</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="runs"></div>
+</div>
+
+<script>
+const PALETTE = [
+  "#1B5E20", "#1B7A8C", "#B9770E", "#7A4CA0", "#2E8B57",
+  "#C0392B", "#2C6FBB", "#8D6E63", "#C2185B", "#5D8AA8",
+  "#E67E22", "#166B7A", "#3366cc", "#dc3912", "#109618"
+];
+
+const INSTRUMENT_LOOKUP = {
+  "QUANTSTUDIO": "QuantStudio™ System",
+  "QUANTSTUDIO™": "QuantStudio™ System",
+  "QS": "QuantStudio™ System",
+  "QS5": "QuantStudio™ 5 System",
+  "QUANTSTUDIO 5": "QuantStudio™ 5 System",
+  "QUANTSTUDIO™ 5": "QuantStudio™ 5 System",
+  "QS1": "QuantStudio™ 1 System",
+  "QUANTSTUDIO 1": "QuantStudio™ 1 System",
+  "QUANTSTUDIO™ 1": "QuantStudio™ 1 System",
+  "QS3": "QuantStudio™ 3 System",
+  "QUANTSTUDIO 3": "QuantStudio™ 3 System",
+  "QUANTSTUDIO™ 3": "QuantStudio™ 3 System",
+  "QS6": "QuantStudio™ 6 Pro System",
+  "QS7": "QuantStudio™ 7 Pro System",
+  "QS7FLEX": "QuantStudio™ 7 Flex System",
+  "QS12K": "QuantStudio™ 12K Flex System"
+};
+
+function normalizeInstrumentName(rawType) {
+  if (!rawType) return "QuantStudio™ System";
+  const cleaned = String(rawType).trim();
+  const key = cleaned.toUpperCase().replace(/\s+/g, " ");
+  if (INSTRUMENT_LOOKUP[key]) return INSTRUMENT_LOOKUP[key];
+  for (const [pattern, val] of Object.entries(INSTRUMENT_LOOKUP)) {
+    if (key.includes(pattern)) return val;
+  }
+  return cleaned.startsWith("QuantStudio") ? cleaned : `QuantStudio™ (${cleaned})`;
+}
+
+const BLOCK_TYPE_GRID = {
+  BLOCK_384W: [16, 24], BLOCK_96W: [8, 12], BLOCK_FAST96: [8, 12], BLOCK_24W: [4, 6], BLOCK_6W: [2, 3]
+};
+const INSTRUMENT_TZ = "America/New_York";
+
+function blockTypeGrid(blockType){ return BLOCK_TYPE_GRID[blockType] || [8, 12]; }
+function wellIndexToPosition(idx, nCols){
+  const r = Math.floor(idx / nCols), c = (idx % nCols) + 1;
+  const label = r < 26 ? String.fromCharCode(65 + r) : String.fromCharCode(65 + Math.floor(r/26) - 1) + String.fromCharCode(65 + (r%26));
+  return `${label}${c}`;
+}
+function formatInstrumentTime(epochMs){
+  if (!epochMs) return "";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: INSTRUMENT_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, timeZoneName: "short"
+  }).formatToParts(new Date(epochMs));
+  const g = t => parts.find(p => p.type === t)?.value || "";
+  return `${g("year")}-${g("month")}-${g("day")} ${g("hour")}:${g("minute")}:${g("second")} ${g("dayPeriod")} ${g("timeZoneName")}`;
+}
+function formatDuration(s, e){
+  if (!s || !e) return "";
+  const sec = Math.round((e - s) / 1000);
+  return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+}
+function csvField(v){ return `"${String(v).replace(/"/g, '""')}"`; }
+function pad(n){ return String(n).padStart(2, "0"); }
+
+async function readJson(zip, path){
+  const f = zip.file(path);
+  if (!f) return {};
+  try {
+    const txt = await f.async("string");
+    const safe = txt.replace(/:\s*-?Infinity\b/g, ": null").replace(/:\s*NaN\b/g, ": null");
+    return JSON.parse(safe);
+  } catch(e){ return {}; }
+}
+
+async function parseEds(file){
+  const zip = await JSZip.loadAsync(file);
+  const [summary, runSummary, runMethod, analysisSetting, analysisResult] = await Promise.all([
+    readJson(zip, "summary.json"),
+    readJson(zip, "run/run_summary.json"),
+    readJson(zip, "setup/run_method.json"),
+    readJson(zip, "primary/analysis_setting.json"),
+    readJson(zip, "primary/analysis_result.json"),
+  ]);
+
+  const blockType = summary.blockType || "BLOCK_96W";
+  const [ , nCols ] = blockTypeGrid(blockType);
+  const wellResults = analysisResult.wellResults || [];
+
+  const rows = [];
+  const ampRecords = [];
+
+  for (const well of wellResults){
+    const wNum = well.wellIndex + 1;
+    const pos = wellIndexToPosition(well.wellIndex, nCols);
+    const sample = well.sampleName || "Unnamed";
+
+    for (const rxn of (well.reactionResults || [])){
+      const target = rxn.targetName || "Target";
+      const omitted = !!rxn.omitted;
+      const amp = rxn.amplificationResult || {};
+      const rn = amp.rn || [];
+      const drn = amp.deltaRn || [];
+
+      for (let i = 0; i < rn.length; i++){
+        ampRecords.push({
+          well: wNum, pos, cycle: i + 1, target,
+          rn: rn[i], drn: drn[i], sample, omit: omitted ? "TRUE" : "FALSE"
+        });
+      }
+
+      rows.push({
+        well: wNum, pos, sample, target,
+        cq: amp.cq, cqConf: amp.cqConf, ampStatus: amp.ampStatus, omitted,
+        flags: (amp.flags || []).join(";"), drn, rn
+      });
+    }
+  }
+
+  const rawInstrument = summary.instrumentType || runSummary.instrumentType || runSummary.instrumentName || "QuantStudio";
+  const instrumentType = normalizeInstrumentName(rawInstrument);
+
+  const meta = {
+    fileName: file.name,
+    instrumentType: instrumentType,
+    blockType,
+    instrumentName: runSummary.instrumentName || "",
+    instrumentSerial: runSummary.instrumentSerialNumber || "",
+    blockSerial: runSummary.blockSerialNumber || "",
+    startTime: runSummary.startTime,
+    endTime: runSummary.endTime,
+    sampleVolume: runMethod.sampleVolume,
+    coverTemperature: runMethod.coverTemperature,
+    cqStage: analysisSetting.cqAnalysisStageNumber,
+    cqStep: analysisSetting.cqAnalysisStepNumber,
+    cqMethod: analysisSetting.cqAlgorithmType || ""
+  };
+
+  return { meta, rows, ampRecords };
+}
+
+function buildTargetSampleCqCsv(meta, rows){
+  const cols = ["Target", "Sample", "Cq"];
+  const lines = [cols.map(csvField).join(",")];
+  for (const r of rows){
+    const cqVal = (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0)
+      ? r.cq.toFixed(2)
+      : "Undetermined";
+    lines.push([r.target, r.sample, cqVal].map(csvField).join(","));
+  }
+  const csv = lines.join("\r\n") + "\r\n";
+  const stem = meta.fileName.replace(/\.eds$/i, "");
+  const fname = `${stem}_Cq_Results.csv`;
+  return { csv, fname };
+}
+
+const loadedRuns = [];
+let activeRunIndex = 0;
+
+function calculateCtAtThreshold(drnCurve, threshold){
+  if (!drnCurve || drnCurve.length < 2) return null;
+  for (let i = 0; i < drnCurve.length - 1; i++){
+    const y1 = drnCurve[i], y2 = drnCurve[i+1];
+    if (y1 <= threshold && y2 >= threshold && y2 > y1){
+      const fraction = (threshold - y1) / (y2 - y1);
+      return (i + 1) + fraction;
+    }
+  }
+  return null;
+}
+
+function updatePipelineOptions(){
+  const runSel = document.getElementById("runSelector");
+  runSel.innerHTML = "";
+  loadedRuns.forEach((r, idx) => {
+    const opt = document.createElement("option");
+    opt.value = idx;
+    opt.textContent = `${idx + 1}. ${r.meta.fileName}`;
+    runSel.appendChild(opt);
+  });
+  if (loadedRuns[activeRunIndex]) runSel.value = activeRunIndex;
+  populateTargetAndSampleSelectors();
+}
+
+function populateTargetAndSampleSelectors(){
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+
+  const targetSel = document.getElementById("targetSelector");
+  const sampleSel = document.getElementById("sampleSelector");
+
+  const targets = [...new Set(run.rows.map(r => r.target))].sort();
+  const samples = [...new Set(run.rows.map(r => r.sample))].sort();
+
+  targetSel.innerHTML = targets.map(t => `<option value="${t}" selected>${t}</option>`).join("");
+  sampleSel.innerHTML = samples.map(s => `<option value="${s}" selected>${s}</option>`).join("");
+
+  document.getElementById("dynamicThreshold").value = run.threshold;
+  renderPipelinePlot();
+}
+
+function renderPipelinePlot(){
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+
+  const targetSel = document.getElementById("targetSelector");
+  const sampleSel = document.getElementById("sampleSelector");
+  const selTargets = Array.from(targetSel.selectedOptions).map(o => o.value);
+  const selSamples = Array.from(sampleSel.selectedOptions).map(o => o.value);
+  const colorBy = document.querySelector('input[name="colorBy"]:checked').value;
+  const plotMode = document.querySelector('input[name="plotMode"]:checked').value;
+  const isLog = document.getElementById("logScaleToggle").checked;
+  const filterByCt = document.getElementById("filterByCtCheck").checked;
+  const threshold = parseFloat(document.getElementById("dynamicThreshold").value) || run.threshold;
+
+  let filtered = run.rows.filter(r => selTargets.includes(r.target) && selSamples.includes(r.sample) && !r.omitted);
+
+  if (filterByCt) {
+    filtered = filtered.filter(r => {
+      const ct = calculateCtAtThreshold(r.drn, threshold);
+      return ct !== null && ct < 34;
+    });
+  }
+
+  const distinctColorKeys = [...new Set(filtered.map(r => colorBy === "target" ? r.target : r.sample))].sort();
+  const colorMap = {};
+  distinctColorKeys.forEach((key, idx) => {
+    colorMap[key] = PALETTE[idx % PALETTE.length];
+  });
+
+  const traces = [];
+  const shownLegendKeys = new Set();
+
+  if (plotMode === "average"){
+    const groups = {};
+    filtered.forEach(r => {
+      const key = `${r.sample} | ${r.target}`;
+      if (!groups[key]) groups[key] = { drnList: [], target: r.target, sample: r.sample };
+      groups[key].drnList.push(r.drn);
+    });
+
+    for (const [key, grp] of Object.entries(groups)){
+      if (!grp.drnList.length || !grp.drnList[0].length) continue;
+      const avg = [];
+      for (let c = 0; c < grp.drnList[0].length; c++){
+        let sum = 0, count = 0;
+        for (let i = 0; i < grp.drnList.length; i++){
+          if (typeof grp.drnList[i][c] === "number"){ sum += grp.drnList[i][c]; count++; }
+        }
+        avg.push(count ? sum / count : 0);
+      }
+
+      const colorKey = colorBy === "target" ? grp.target : grp.sample;
+      const color = colorMap[colorKey] || "#1B5E20";
+
+      traces.push({
+        x: Array.from({length: avg.length}, (_, i) => i + 1),
+        y: avg,
+        mode: "lines",
+        name: key,
+        line: { color, width: 2.2 },
+        hoverinfo: "name+y"
+      });
+    }
+  } else {
+    filtered.forEach(r => {
+      if (!r.drn.length) return;
+
+      const colorKey = colorBy === "target" ? r.target : r.sample;
+      const color = colorMap[colorKey] || "#1B5E20";
+      const isFirst = !shownLegendKeys.has(colorKey);
+      if (isFirst) shownLegendKeys.add(colorKey);
+
+      traces.push({
+        x: Array.from({length: r.drn.length}, (_, i) => i + 1),
+        y: r.drn,
+        mode: "lines",
+        name: colorKey,
+        legendgroup: colorKey,
+        showlegend: isFirst,
+        line: { color, width: 1.4 },
+        opacity: 0.75,
+        hoverlabel: { namelength: -1 },
+        text: `${r.pos} (${r.sample} - ${r.target})`,
+        hovertemplate: "<b>%{text}</b><br>Cycle: %{x}<br>ΔRn: %{y:.1f}<extra></extra>"
+      });
+    });
+  }
+
+  const shapes = [{
+    type: 'line',
+    xref: 'paper',
+    x0: 0,
+    x1: 1,
+    yref: 'y',
+    y0: threshold,
+    y1: threshold,
+    line: {
+      color: '#C0392B',
+      width: 2.2,
+      dash: 'dash'
+    },
+    editable: true
+  }];
+
+  const layout = {
+    title: {
+      text: `Amplification Curves: ${run.meta.fileName} (Colored by ${colorBy === 'target' ? 'Target' : 'Sample'})`,
+      font: { size: 14, color: "#12313F" }
+    },
+    xaxis: { title: "Cycle Number" },
+    yaxis: {
+      title: "ΔRn",
+      type: isLog ? "log" : "linear",
+      autorange: true
+    },
+    shapes: shapes,
+    margin: { t: 45, r: 20, b: 40, l: 65 },
+    hovermode: "closest",
+    legend: {
+      title: { text: `<b>${colorBy === 'target' ? 'Targets' : 'Samples'}</b>` },
+      orientation: "v",
+      x: 1.02,
+      y: 1
+    }
+  };
+
+  const plotDiv = document.getElementById("plotCanvas");
+  Plotly.react(plotDiv, traces, layout, { responsive: true, editable: true, displayModeBar: true });
+
+  plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_relayout');
+  plotDiv.on('plotly_relayout', function(eventData) {
+    let newY = null;
+    if (eventData['shapes[0].y0'] !== undefined) {
+      newY = eventData['shapes[0].y0'];
+    } else if (eventData['shapes[0].y1'] !== undefined) {
+      newY = eventData['shapes[0].y1'];
+    }
+    if (newY !== null && isFinite(newY)) {
+      const rounded = Math.round(newY);
+      run.threshold = rounded;
+      document.getElementById("dynamicThreshold").value = rounded;
+      renderPipelinePlot();
+    }
+  });
+
+  const tbody = document.querySelector("#pipelineDataTable tbody");
+  tbody.innerHTML = filtered.map(r => {
+    const displayCq = (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0)
+      ? r.cq.toFixed(2)
+      : "Undetermined";
+    return `
+      <tr>
+        <td class="txt"><strong>${r.target}</strong></td>
+        <td class="txt">${r.sample}</td>
+        <td>${displayCq}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+const runsEl = document.getElementById("runs");
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("fileInput");
+const globalBar = document.getElementById("globalBar");
+const globalSummary = document.getElementById("globalSummary");
+const downloadAllBtn = document.getElementById("downloadAllBtn");
+const pipelineSection = document.getElementById("pipelineSection");
+
+dropzone.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", e => handleFiles(e.target.files));
+["dragenter", "dragover"].forEach(evt => dropzone.addEventListener(evt, e => {
+  e.preventDefault(); dropzone.classList.add("drag");
+}));
+["dragleave", "drop"].forEach(evt => dropzone.addEventListener(evt, e => {
+  e.preventDefault(); dropzone.classList.remove("drag");
+}));
+dropzone.addEventListener("drop", e => handleFiles(e.dataTransfer.files));
+
+function handleFiles(fileList){
+  [...fileList].filter(f => /\.eds$/i.test(f.name)).forEach(processFile);
+}
+
+document.getElementById("runSelector").addEventListener("change", e => {
+  activeRunIndex = parseInt(e.target.value, 10);
+  populateTargetAndSampleSelectors();
+});
+
+document.getElementById("targetSelector").addEventListener("change", renderPipelinePlot);
+document.getElementById("sampleSelector").addEventListener("change", renderPipelinePlot);
+document.querySelectorAll('input[name="colorBy"]').forEach(el => el.addEventListener("change", renderPipelinePlot));
+document.querySelectorAll('input[name="plotMode"]').forEach(el => el.addEventListener("change", renderPipelinePlot));
+document.getElementById("logScaleToggle").addEventListener("change", renderPipelinePlot);
+document.getElementById("filterByCtCheck").addEventListener("change", renderPipelinePlot);
+
+document.getElementById("dynamicThreshold").addEventListener("input", e => {
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+  run.threshold = parseFloat(e.target.value) || 0;
+  renderPipelinePlot();
+});
+
+document.getElementById("autoThresholdBtn").addEventListener("click", () => {
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+
+  const baselineCycles = 15;
+  let allBaseSignals = [];
+  run.rows.forEach(r => {
+    if (r.drn && r.drn.length >= baselineCycles){
+      allBaseSignals.push(...r.drn.slice(2, baselineCycles));
+    }
+  });
+
+  if (allBaseSignals.length){
+    const mean = allBaseSignals.reduce((a, b) => a + b, 0) / allBaseSignals.length;
+    const variance = allBaseSignals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / allBaseSignals.length;
+    const sd = Math.sqrt(variance);
+    const autoThresh = Math.round(Math.max(mean + (10 * sd), 200));
+    run.threshold = autoThresh;
+    document.getElementById("dynamicThreshold").value = autoThresh;
+    renderPipelinePlot();
+  }
+});
+
+document.getElementById("exportPlotImgBtn").addEventListener("click", () => {
+  const run = loadedRuns[activeRunIndex];
+  const filename = run ? `${run.meta.fileName.replace(/\.eds$/i, '')}_plot` : 'amplification_plot';
+  Plotly.downloadImage('plotCanvas', {
+    format: 'png',
+    width: 1200,
+    height: 700,
+    filename: filename
+  });
+});
+
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    if (btn.dataset.tab === "plot"){
+      document.getElementById("plotView").style.display = "";
+      document.getElementById("tableView").style.display = "none";
+      Plotly.Plots.resize("plotCanvas");
+    } else {
+      document.getElementById("plotView").style.display = "none";
+      document.getElementById("tableView").style.display = "";
+    }
+  });
+});
+
+document.getElementById("exportExcelBtn").addEventListener("click", () => {
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+
+  const data = run.rows.map(r => ({
+    "Target": r.target,
+    "Sample": r.sample,
+    "Cq": (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0) ? Number(r.cq.toFixed(2)) : "Undetermined"
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Cq_Results");
+  XLSX.writeFile(wb, `${run.meta.fileName.replace(/\.eds$/i, '')}_Cq_Results.xlsx`);
+});
+
+downloadAllBtn.addEventListener("click", async () => {
+  if (!loadedRuns.length) return;
+
+  if (loadedRuns.length === 1) {
+    const { meta, rows } = loadedRuns[0];
+    const { csv, fname } = buildTargetSampleCqCsv(meta, rows);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = fname; a.click();
+    URL.revokeObjectURL(url);
+    return;
+  }
+
+  downloadAllBtn.disabled = true;
+  downloadAllBtn.textContent = "Zipping Files…";
+
+  const zip = new JSZip();
+  loadedRuns.forEach(({ meta, rows }) => {
+    const { csv, fname } = buildTargetSampleCqCsv(meta, rows);
+    zip.file(fname, csv);
+  });
+
+  const content = await zip.generateAsync({ type: "blob" });
+  const url = URL.createObjectURL(content);
+  const a = document.createElement("a");
+  const d = new Date();
+  a.download = `All_Runs_Cq_Results_${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}.zip`;
+  a.href = url;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  downloadAllBtn.disabled = false;
+  downloadAllBtn.textContent = "Download All CSVs (Target, Sample, Cq)";
+});
+
+async function processFile(file){
+  const card = document.createElement("div");
+  card.className = "run";
+  card.innerHTML = `
+    <div class="run-head">
+      <div>
+        <h3>${file.name}</h3>
+        <div class="meta-grid" data-meta></div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+        <span style="font-size:12px;color:var(--bpx-muted)" data-status>Parsing…</span>
+        <button data-download disabled>Download CSV (Target/Sample/Cq)</button>
+      </div>
+    </div>
+    <div class="table-scroll" style="display:none;" data-body>
+      <table>
+        <thead><tr><th>Target</th><th class="txt">Sample</th><th>Cq</th></tr></thead>
+        <tbody data-tbody></tbody>
+      </table>
+    </div>
+  `;
+  runsEl.appendChild(card);
+
+  const statusEl = card.querySelector("[data-status]");
+  const downloadBtn = card.querySelector("[data-download]");
+
+  try {
+    const { meta, rows, ampRecords } = await parseEds(file);
+
+    card.querySelector("[data-meta]").innerHTML = `
+      <div>Instrument <span>${meta.instrumentType}</span></div>
+      <div>Start <span>${formatInstrumentTime(meta.startTime) || "–"}</span></div>
+      <div>Duration <span>${formatDuration(meta.startTime, meta.endTime) || "–"}</span></div>
+    `;
+
+    if (!rows.length){
+      statusEl.textContent = "No wells found.";
+      return;
+    }
+
+    const runRecord = { id: loadedRuns.length, meta, rows, ampRecords, threshold: 1000 };
+    loadedRuns.push(runRecord);
+
+    globalBar.style.display = "flex";
+    globalSummary.textContent = `${loadedRuns.length} run${loadedRuns.length > 1 ? "s" : ""} loaded`;
+    pipelineSection.style.display = "block";
+
+    statusEl.textContent = `${rows.length} reactions`;
+    card.querySelector("[data-body]").style.display = "";
+
+    const tbody = card.querySelector("[data-tbody]");
+    tbody.innerHTML = rows.slice(0, 50).map(r => {
+      const displayCq = (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0)
+        ? r.cq.toFixed(2)
+        : "Undetermined";
+      return `
+        <tr>
+          <td class="txt"><strong>${r.target}</strong></td>
+          <td class="txt">${r.sample}</td>
+          <td>${displayCq}</td>
+        </tr>
+      `;
+    }).join("") + (rows.length > 50 ? `<tr><td colspan="3" style="text-align:center;color:var(--bpx-muted)">... ${rows.length - 50} more reactions ...</td></tr>` : "");
+
+    downloadBtn.disabled = false;
+    downloadBtn.addEventListener("click", () => {
+      const { csv, fname } = buildTargetSampleCqCsv(meta, rows);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = fname; a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    updatePipelineOptions();
+
+  } catch(err) {
+    statusEl.textContent = "Parse failed";
+    console.error(err);
+  }
+}
+</script>
+</body>
+</html>
