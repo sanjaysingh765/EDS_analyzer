@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QS run Analyzer</title>
+<title>BioPathogenix qPCR & EDS Analyzer</title>
 
 <!-- Third-party libraries -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -151,14 +151,14 @@
       <img src="https://biopathogenix.com/wp-content/uploads/2021/07/BioPathogenix-Horizontal-1.svg" alt="BioPathogenix Logo" onerror="this.style.display='none'">
       <div class="brand-title">
         <h1>BioPathogenix qPCR & EDS Analyzer</h1>
-        <p>Diagnostic analysis suite for QuantStudio runs and dynamic threshold calculation</p>
+        <p>Direct Instrument Runs & Re-analyzed Software Files Supported</p>
       </div>
     </div>
   </header>
 
   <div class="dropzone" id="dropzone">
     <strong>Drop .eds files here</strong> or click to choose
-    <div class="hint">Compatible with QuantStudio base instruments, QuantStudio 5, and all modular blocks</div>
+    <div class="hint">Accepts both original instrument runs and analyzed copies (QuantStudio Base, QS1, QS3, QS5, QS6, QS7, QS12K)</div>
     <input type="file" id="fileInput" accept=".eds" multiple>
   </div>
 
@@ -305,77 +305,428 @@ function formatDuration(s, e){
 function csvField(v){ return `"${String(v).replace(/"/g, '""')}"`; }
 function pad(n){ return String(n).padStart(2, "0"); }
 
-async function readJson(zip, path){
-  const f = zip.file(path);
-  if (!f) return {};
+function findZipEntry(zip, nameOrPattern){
+  if (typeof nameOrPattern === "string"){
+    const exact = zip.file(nameOrPattern);
+    if (exact) return exact;
+  }
+  const reg = typeof nameOrPattern === "string"
+    ? new RegExp("(?:^|/)" + nameOrPattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i")
+    : nameOrPattern;
+  const match = Object.keys(zip.files).find(k => reg.test(k) && !zip.files[k].dir);
+  return match ? zip.file(match) : null;
+}
+
+async function readJson(zip, nameOrPattern){
+  const entry = findZipEntry(zip, nameOrPattern);
+  if (!entry) return {};
   try {
-    const txt = await f.async("string");
+    const txt = await entry.async("string");
     const safe = txt.replace(/:\s*-?Infinity\b/g, ": null").replace(/:\s*NaN\b/g, ": null");
     return JSON.parse(safe);
   } catch(e){ return {}; }
 }
 
+async function readXml(zip, nameOrPattern){
+  const entry = findZipEntry(zip, nameOrPattern);
+  if (!entry) return null;
+  try {
+    return await entry.async("string");
+  } catch(e){ return null; }
+}
+
+function parseMulticomponentXml(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, "text/xml");
+  const wellDyeData = {};
+
+  function getFloats(node) {
+    if (!node) return [];
+    const cycles = node.querySelectorAll("cycle, CYCLE, Cycle, val, VAL, Val, point, POINT");
+    if (cycles.length > 0) {
+      return Array.from(cycles).map(c => parseFloat(c.textContent.trim())).filter(isFinite);
+    }
+    const txt = node.textContent || "";
+    return txt.trim().split(/[\s,;]+/).map(v => parseFloat(v)).filter(isFinite);
+  }
+
+  // Modern QuantStudio Design & Analysis export format:
+  // <DyeData WellIndex="N"><DyeList>[DYE1,DYE2,...]</DyeList></DyeData>
+  // <SignalData WellIndex="N"><CycleData>[...]</CycleData><CycleData>[...]</CycleData>...</SignalData>
+  // (one CycleData per SignalData, in the same order as that well's DyeList)
+  const dyeDataNodes = doc.querySelectorAll("DyeData");
+  if (dyeDataNodes.length > 0) {
+    const wellDyeOrder = {};
+    dyeDataNodes.forEach(node => {
+      const wIdx = parseInt(node.getAttribute("WellIndex"), 10);
+      const listEl = node.querySelector("DyeList");
+      const txt = listEl ? listEl.textContent.trim() : "";
+      const dyes = txt.replace(/^\[|\]$/g, "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+      wellDyeOrder[wIdx] = dyes;
+    });
+
+    const signalDataNodes = doc.querySelectorAll("SignalData");
+    signalDataNodes.forEach(node => {
+      const wIdx = parseInt(node.getAttribute("WellIndex"), 10);
+      const wNum = wIdx + 1;
+      const dyes = wellDyeOrder[wIdx] || [];
+      if (!wellDyeData[wNum]) wellDyeData[wNum] = {};
+      const cycleNodes = node.querySelectorAll("CycleData");
+      cycleNodes.forEach((cNode, i) => {
+        const dName = dyes[i];
+        if (!dName) return;
+        const ctxt = (cNode.textContent || "").trim().replace(/^\[|\]$/g, "");
+        const vals = ctxt.split(",").map(v => parseFloat(v)).filter(isFinite);
+        if (vals.length) wellDyeData[wNum][dName] = vals;
+      });
+    });
+
+    if (Object.keys(wellDyeData).length > 0) return wellDyeData;
+  }
+
+  const wellNodes = doc.querySelectorAll("well, WELL, Well, w, W");
+  if (wellNodes.length > 0) {
+    wellNodes.forEach((wNode, wIdx) => {
+      const wAttr = wNode.getAttribute("id") || wNode.getAttribute("number") || 
+                    wNode.getAttribute("wellIndex") || wNode.getAttribute("index") ||
+                    wNode.getAttribute("wID") || wNode.getAttribute("pos");
+      const wNum = wAttr ? (parseInt(wAttr, 10) + (wAttr.toLowerCase().includes("index") ? 1 : 0)) : (wIdx + 1);
+      if (!wellDyeData[wNum]) wellDyeData[wNum] = {};
+
+      const dyeNodes = wNode.querySelectorAll("dye, DYE, Dye, channel, CHANNEL, Channel, d, D");
+      dyeNodes.forEach(dNode => {
+        const dName = (dNode.getAttribute("name") || dNode.getAttribute("id") || 
+                       dNode.getAttribute("dye") || dNode.getAttribute("dyeName") || "FAM").trim().toUpperCase();
+        const targetNode = dNode.querySelector("signal, SIGNAL, values, VALUES, data, DATA, raw, RAW") || dNode;
+        const vals = getFloats(targetNode);
+        if (vals.length) wellDyeData[wNum][dName] = vals;
+      });
+    });
+  }
+
+  if (Object.keys(wellDyeData).length === 0) {
+    const dyeNodes = doc.querySelectorAll("dye, DYE, Dye, channel, CHANNEL, Channel");
+    dyeNodes.forEach(dNode => {
+      const dName = (dNode.getAttribute("name") || dNode.getAttribute("id") || 
+                     dNode.getAttribute("dye") || dNode.getAttribute("dyeName") || "FAM").trim().toUpperCase();
+      const wells = dNode.querySelectorAll("well, WELL, Well, w, W");
+      wells.forEach((wNode, wIdx) => {
+        const wAttr = wNode.getAttribute("id") || wNode.getAttribute("number") || 
+                      wNode.getAttribute("wellIndex") || wNode.getAttribute("wID");
+        const wNum = wAttr ? parseInt(wAttr, 10) : (wIdx + 1);
+        if (!wellDyeData[wNum]) wellDyeData[wNum] = {};
+        const vals = getFloats(wNode);
+        if (vals.length) wellDyeData[wNum][dName] = vals;
+      });
+    });
+  }
+
+  return wellDyeData;
+}
+
+function calculateCtAtThreshold(drnCurve, threshold){
+  if (!drnCurve || drnCurve.length < 2) return null;
+  for (let i = 0; i < drnCurve.length - 1; i++){
+    const y1 = drnCurve[i], y2 = drnCurve[i+1];
+    if (y1 <= threshold && y2 >= threshold && y2 > y1){
+      const fraction = (threshold - y1) / (y2 - y1);
+      return (i + 1) + fraction;
+    }
+  }
+  return null;
+}
+
 async function parseEds(file){
   const zip = await JSZip.loadAsync(file);
+
   const [summary, runSummary, runMethod, analysisSetting, analysisResult] = await Promise.all([
     readJson(zip, "summary.json"),
-    readJson(zip, "run/run_summary.json"),
-    readJson(zip, "setup/run_method.json"),
-    readJson(zip, "primary/analysis_setting.json"),
-    readJson(zip, "primary/analysis_result.json"),
+    readJson(zip, "run_summary.json"),
+    readJson(zip, "run_method.json"),
+    readJson(zip, "analysis_setting.json"),
+    readJson(zip, "analysis_result.json"),
   ]);
 
   const blockType = summary.blockType || "BLOCK_96W";
   const [ , nCols ] = blockTypeGrid(blockType);
-  const wellResults = analysisResult.wellResults || [];
 
   const rows = [];
   const ampRecords = [];
 
-  for (const well of wellResults){
-    const wNum = well.wellIndex + 1;
-    const pos = wellIndexToPosition(well.wellIndex, nCols);
-    const sample = well.sampleName || "Unnamed";
+  const wellResults = analysisResult.wellResults || [];
 
-    for (const rxn of (well.reactionResults || [])){
-      const target = rxn.targetName || "Target";
-      const omitted = !!rxn.omitted;
-      const amp = rxn.amplificationResult || {};
-      const rn = amp.rn || [];
-      const drn = amp.deltaRn || [];
+  if (wellResults.length > 0) {
+    // Mode 1: Analyzed file (saved from desktop software)
+    for (const well of wellResults){
+      const wNum = well.wellIndex + 1;
+      const pos = wellIndexToPosition(well.wellIndex, nCols);
+      const sample = well.sampleName || "Unnamed";
 
-      for (let i = 0; i < rn.length; i++){
-        ampRecords.push({
-          well: wNum, pos, cycle: i + 1, target,
-          rn: rn[i], drn: drn[i], sample, omit: omitted ? "TRUE" : "FALSE"
+      for (const rxn of (well.reactionResults || [])){
+        const target = rxn.targetName || "Target";
+        const omitted = !!rxn.omitted;
+        const amp = rxn.amplificationResult || {};
+        const rn = amp.rn || [];
+        const drn = amp.deltaRn || [];
+
+        for (let i = 0; i < rn.length; i++){
+          ampRecords.push({
+            well: wNum, pos, cycle: i + 1, target,
+            rn: rn[i], drn: drn[i], sample, omit: omitted ? "TRUE" : "FALSE"
+          });
+        }
+
+        rows.push({
+          well: wNum, pos, sample, target,
+          cq: amp.cq, cqConf: amp.cqConf, ampStatus: amp.ampStatus, omitted,
+          flags: (amp.flags || []).join(";"), drn, rn
+        });
+      }
+    }
+  } else {
+    // Mode 2: Original un-analyzed file directly from instrument
+    const detectorRegistry = {}; // ID -> { targetName, reporter }
+
+    const plateSetupJson = await readJson(zip, "plate_setup.json");
+    const jsonRoot = plateSetupJson.plateSetup || plateSetupJson;
+
+    // 1. Populate detector registry from JSON detectors/assays if available
+    const jsonDetectors = jsonRoot.detectors || jsonRoot.assays || jsonRoot.targets || [];
+    jsonDetectors.forEach((d, idx) => {
+      const id = String(d.id !== undefined ? d.id : (d.detectorId !== undefined ? d.detectorId : idx));
+      const name = d.name || d.targetName || d.detectorName || d.assayName || `Target_${id}`;
+      const reporter = (d.reporter || d.reporterDye || d.dye || "FAM").trim().toUpperCase();
+      detectorRegistry[id] = { targetName: name, reporter };
+    });
+
+    let setupWells = jsonRoot.wells || [];
+
+    // 2. Fallback to XML plate setup if JSON is absent or incomplete
+    if (!setupWells.length || Object.keys(detectorRegistry).length === 0) {
+      const xmlTxt = await readXml(zip, "plate_setup.xml");
+      if (xmlTxt) {
+        const doc = new DOMParser().parseFromString(xmlTxt, "text/xml");
+
+        // Scan global detectors / assays defined in plate_setup.xml
+        const globalTargets = doc.querySelectorAll("detector, DETECTOR, target, TARGET, assay, ASSAY, feature, FEATURE");
+        globalTargets.forEach((tn, idx) => {
+          const id = tn.getAttribute("id") || tn.getAttribute("detectorId") || tn.getAttribute("assayId") || String(idx);
+          const name = tn.getAttribute("name") || tn.getAttribute("targetName") || tn.getAttribute("detectorName") || tn.getAttribute("assayName");
+          const reporter = (tn.getAttribute("reporter") || tn.getAttribute("reporterDye") || tn.getAttribute("dye") || "FAM").trim().toUpperCase();
+          if (name && !detectorRegistry[id]) {
+            detectorRegistry[id] = { targetName: name.trim(), reporter };
+          }
+        });
+
+        if (!setupWells.length) {
+          const wNodes = doc.querySelectorAll("well, WELL, Well");
+          wNodes.forEach((wn, idx) => {
+            const wId = wn.getAttribute("id") || wn.getAttribute("number") || wn.getAttribute("wID");
+            const wIdx = wId ? (parseInt(wId, 10) - 1) : idx;
+            const sampleEl = wn.querySelector("sample, SAMPLE, Sample");
+            const sampleName = sampleEl ? (sampleEl.getAttribute("name") || sampleEl.getAttribute("id") || sampleEl.textContent.trim()) : "";
+
+            const rxns = [];
+            // Query for references or embedded detectors
+            const refEls = wn.querySelectorAll("detectorRef, targetRef, featureRef, assayRef, detector, target, feature, assay");
+            refEls.forEach(tn => {
+              const refId = tn.getAttribute("id") || tn.getAttribute("ref") || tn.getAttribute("detectorId") || tn.getAttribute("targetId") || tn.getAttribute("assayId");
+              let tName = tn.getAttribute("name") || tn.getAttribute("targetName") || tn.getAttribute("detectorName");
+              let rep = (tn.getAttribute("reporter") || tn.getAttribute("reporterDye") || tn.getAttribute("dye") || "").trim().toUpperCase();
+
+              if (refId && detectorRegistry[refId]) {
+                tName = tName || detectorRegistry[refId].targetName;
+                rep = rep || detectorRegistry[refId].reporter;
+              }
+
+              if (tName) {
+                rxns.push({
+                  targetName: tName.trim(),
+                  reporter: rep || "FAM",
+                  omitted: tn.getAttribute("omitted") === "true"
+                });
+              }
+            });
+
+            setupWells.push({
+              wellIndex: wIdx,
+              sampleName,
+              reactions: rxns
+            });
+          });
+        }
+      }
+    }
+
+    // Extract fluorescence curves from JSON or XML multicomponent data
+    let wellDyeSignals = {};
+    const mcdJson = await readJson(zip, "multicomponent_data.json");
+    const mcdWells = mcdJson.wellMulticomponents || mcdJson.wells || [];
+    if (mcdWells.length) {
+      mcdWells.forEach((w, idx) => {
+        const wIdx = w.wellIndex !== undefined ? w.wellIndex : idx;
+        const wNum = wIdx + 1;
+        wellDyeSignals[wNum] = {};
+        (w.dyes || w.channels || []).forEach(d => {
+          const dName = (d.dyeName || d.name || d.dye || "").trim().toUpperCase();
+          const sigs = d.signals || d.signal || d.values || [];
+          if (dName && sigs.length) wellDyeSignals[wNum][dName] = sigs;
+        });
+      });
+    }
+
+    if (Object.keys(wellDyeSignals).length === 0) {
+      const mcdXml = await readXml(zip, "multicomponentdata.xml");
+      if (mcdXml) {
+        wellDyeSignals = parseMulticomponentXml(mcdXml);
+      }
+    }
+
+    // If setup wells were completely absent, synthesize directly from dyes
+    if (!setupWells.length && Object.keys(wellDyeSignals).length > 0) {
+      Object.keys(wellDyeSignals).forEach(wNumStr => {
+        const wNum = parseInt(wNumStr, 10);
+        const dyes = Object.keys(wellDyeSignals[wNum]).filter(d => d !== "ROX");
+        const rxns = dyes.map(d => ({ targetName: d, reporter: d, omitted: false }));
+        setupWells.push({
+          wellIndex: wNum - 1,
+          sampleName: `Well_${wNum}`,
+          reactions: rxns.length ? rxns : [{ targetName: "Target", reporter: "FAM", omitted: false }]
+        });
+      });
+    }
+
+    // Name -> reporter lookup from the plate-level target list (modern JSON export),
+    // used to resolve reporter dye for per-well targetAssignments below.
+    const targetReporterByName = {};
+    (jsonRoot.targets || []).forEach(t => {
+      const tName = t.name || t.targetName;
+      if (tName) targetReporterByName[tName] = (t.reporter || "").trim().toUpperCase();
+    });
+
+    for (const w of setupWells){
+      const wIdx = w.wellIndex !== undefined ? w.wellIndex : (w.index !== undefined ? w.index : 0);
+      const wNum = wIdx + 1;
+      const pos = wellIndexToPosition(wIdx, nCols);
+      const sample = w.sampleName || w.sample?.name || (typeof w.sample === "string" ? w.sample : "") || "Unnamed";
+      
+      let rxns = w.reactions || w.reactionResults || w.targets || w.assays || [];
+
+      // Modern JSON export: per-well target assignments by name (no detector id/reporter attached)
+      if (!rxns.length && w.targetAssignments && w.targetAssignments.length) {
+        rxns = w.targetAssignments.map(ta => {
+          const tName = ta.targetName || ta.name || "";
+          return {
+            targetName: tName,
+            reporter: targetReporterByName[tName] || "",
+            omitted: !!ta.omitted
+          };
+        });
+      }
+      
+      // Resolve detector references if present
+      if (!rxns.length && (w.detectorRefs || w.detectors || w.features)) {
+        const refs = w.detectorRefs || w.detectors || w.features || [];
+        rxns = refs.map((ref, rIdx) => {
+          const rId = typeof ref === "object" ? (ref.id || ref.detectorId || ref.targetId || rIdx) : ref;
+          if (detectorRegistry[rId]) {
+            return {
+              targetName: detectorRegistry[rId].targetName,
+              reporter: detectorRegistry[rId].reporter,
+              omitted: !!ref.omitted
+            };
+          }
+          return { targetName: `Target_${rId}`, reporter: "FAM", omitted: false };
         });
       }
 
-      rows.push({
-        well: wNum, pos, sample, target,
-        cq: amp.cq, cqConf: amp.cqConf, ampStatus: amp.ampStatus, omitted,
-        flags: (amp.flags || []).join(";"), drn, rn
+      // If still empty, map from the available non-ROX signals
+      const dyeMap = wellDyeSignals[wNum] || {};
+      const rox = dyeMap["ROX"];
+      const nonRoxDyes = Object.keys(dyeMap).filter(d => d !== "ROX");
+
+      if (!rxns.length) {
+        rxns = nonRoxDyes.map(d => {
+          const matchKey = Object.keys(detectorRegistry).find(k => detectorRegistry[k].reporter === d);
+          const tName = matchKey ? detectorRegistry[matchKey].targetName : d;
+          return { targetName: tName, reporter: d, omitted: false };
+        });
+      }
+
+      if (!rxns.length) {
+        rxns = [{ targetName: "Target", reporter: "FAM", omitted: false }];
+      }
+
+      rxns.forEach((rxn, rxnIdx) => {
+        let target = rxn.targetName || rxn.target?.name || rxn.name || "";
+        const omitted = !!rxn.omitted;
+        let reporter = (rxn.reporter || rxn.reporterDye || rxn.dye || "").trim().toUpperCase();
+
+        if ((!target || target === "Target") && rxn.detectorId && detectorRegistry[rxn.detectorId]) {
+          target = detectorRegistry[rxn.detectorId].targetName;
+          reporter = reporter || detectorRegistry[rxn.detectorId].reporter;
+        }
+
+        if (!target) target = "Target";
+
+        let raw = dyeMap[reporter];
+        if (!raw || !raw.length) {
+          const fallbackDye = nonRoxDyes[rxnIdx] || nonRoxDyes[0];
+          raw = dyeMap[fallbackDye] || [];
+        }
+
+        const rn = [];
+        const drn = [];
+        if (raw.length) {
+          for (let i = 0; i < raw.length; i++) {
+            const val = (rox && rox[i] && rox[i] > 0) ? (raw[i] / rox[i]) * 10000 : raw[i];
+            rn.push(val);
+          }
+          const bStart = Math.min(2, Math.floor(rn.length * 0.08));
+          const bEnd = Math.min(15, Math.floor(rn.length * 0.35)) || 3;
+          const bSlice = rn.slice(bStart, bEnd);
+          const baseMean = bSlice.length ? (bSlice.reduce((a, b) => a + b, 0) / bSlice.length) : 0;
+          for (let i = 0; i < rn.length; i++) {
+            drn.push(rn[i] - baseMean);
+          }
+        }
+
+        const calculatedCq = calculateCtAtThreshold(drn, 1000);
+        const ampStatus = (calculatedCq !== null && calculatedCq > 0) ? "AMP" : "NOAMP";
+
+        for (let i = 0; i < rn.length; i++){
+          ampRecords.push({
+            well: wNum, pos, cycle: i + 1, target,
+            rn: rn[i], drn: drn[i], sample, omit: omitted ? "TRUE" : "FALSE"
+          });
+        }
+
+        rows.push({
+          well: wNum, pos, sample, target,
+          cq: calculatedCq, cqConf: 1.0, ampStatus, omitted,
+          flags: "", drn, rn
+        });
       });
     }
   }
 
-  const rawInstrument = summary.instrumentType || runSummary.instrumentType || runSummary.instrumentName || "QuantStudio";
+  const rawInstrument = summary.instrumentType || runSummary.instrumentType || summary.instrumentName || "QuantStudio";
   const instrumentType = normalizeInstrumentName(rawInstrument);
 
   const meta = {
     fileName: file.name,
     instrumentType: instrumentType,
     blockType,
-    instrumentName: runSummary.instrumentName || "",
-    instrumentSerial: runSummary.instrumentSerialNumber || "",
-    blockSerial: runSummary.blockSerialNumber || "",
-    startTime: runSummary.startTime,
-    endTime: runSummary.endTime,
+    instrumentName: runSummary.instrumentName || summary.instrumentName || "QuantStudio",
+    instrumentSerial: runSummary.instrumentSerialNumber || summary.instrumentSerialNumber || summary.serialNumber || "",
+    blockSerial: runSummary.blockSerialNumber || summary.blockSerialNumber || "",
+    startTime: runSummary.startTime || summary.startTime || summary.runStartTime,
+    endTime: runSummary.endTime || summary.endTime || summary.runEndTime,
     sampleVolume: runMethod.sampleVolume,
     coverTemperature: runMethod.coverTemperature,
-    cqStage: analysisSetting.cqAnalysisStageNumber,
-    cqStep: analysisSetting.cqAnalysisStepNumber,
-    cqMethod: analysisSetting.cqAlgorithmType || ""
+    cqStage: analysisSetting.cqAnalysisStageNumber || 2,
+    cqStep: analysisSetting.cqAnalysisStepNumber || 2,
+    cqMethod: analysisSetting.cqAlgorithmType || "BASELINE_THRESHOLD"
   };
 
   return { meta, rows, ampRecords };
@@ -398,18 +749,6 @@ function buildTargetSampleCqCsv(meta, rows){
 
 const loadedRuns = [];
 let activeRunIndex = 0;
-
-function calculateCtAtThreshold(drnCurve, threshold){
-  if (!drnCurve || drnCurve.length < 2) return null;
-  for (let i = 0; i < drnCurve.length - 1; i++){
-    const y1 = drnCurve[i], y2 = drnCurve[i+1];
-    if (y1 <= threshold && y2 >= threshold && y2 > y1){
-      const fraction = (threshold - y1) / (y2 - y1);
-      return (i + 1) + fraction;
-    }
-  }
-  return null;
-}
 
 function updatePipelineOptions(){
   const runSel = document.getElementById("runSelector");
@@ -588,9 +927,10 @@ function renderPipelinePlot(){
 
   const tbody = document.querySelector("#pipelineDataTable tbody");
   tbody.innerHTML = filtered.map(r => {
-    const displayCq = (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0)
-      ? r.cq.toFixed(2)
-      : "Undetermined";
+    const calcCt = calculateCtAtThreshold(r.drn, threshold);
+    const displayCq = (calcCt !== null && isFinite(calcCt) && calcCt > 0)
+      ? calcCt.toFixed(2)
+      : (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0 ? r.cq.toFixed(2) : "Undetermined");
     return `
       <tr>
         <td class="txt"><strong>${r.target}</strong></td>
@@ -601,6 +941,7 @@ function renderPipelinePlot(){
   }).join("");
 }
 
+/* ---------------- Event Listeners & UI Binding ---------------- */
 const runsEl = document.getElementById("runs");
 const dropzone = document.getElementById("dropzone");
 const fileInput = document.getElementById("fileInput");
@@ -695,11 +1036,18 @@ document.getElementById("exportExcelBtn").addEventListener("click", () => {
   const run = loadedRuns[activeRunIndex];
   if (!run) return;
 
-  const data = run.rows.map(r => ({
-    "Target": r.target,
-    "Sample": r.sample,
-    "Cq": (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0) ? Number(r.cq.toFixed(2)) : "Undetermined"
-  }));
+  const threshold = run.threshold;
+  const data = run.rows.map(r => {
+    const calcCt = calculateCtAtThreshold(r.drn, threshold);
+    const finalCq = (calcCt !== null && isFinite(calcCt) && calcCt > 0)
+      ? Number(calcCt.toFixed(2))
+      : (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0 ? Number(r.cq.toFixed(2)) : "Undetermined");
+    return {
+      "Target": r.target,
+      "Sample": r.sample,
+      "Cq": finalCq
+    };
+  });
 
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
@@ -711,8 +1059,15 @@ downloadAllBtn.addEventListener("click", async () => {
   if (!loadedRuns.length) return;
 
   if (loadedRuns.length === 1) {
-    const { meta, rows } = loadedRuns[0];
-    const { csv, fname } = buildTargetSampleCqCsv(meta, rows);
+    const { meta, rows, threshold } = loadedRuns[0];
+    const updatedRows = rows.map(r => {
+      const calcCt = calculateCtAtThreshold(r.drn, threshold);
+      return {
+        ...r,
+        cq: (calcCt !== null && isFinite(calcCt) && calcCt > 0) ? calcCt : r.cq
+      };
+    });
+    const { csv, fname } = buildTargetSampleCqCsv(meta, updatedRows);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -725,8 +1080,15 @@ downloadAllBtn.addEventListener("click", async () => {
   downloadAllBtn.textContent = "Zipping Files…";
 
   const zip = new JSZip();
-  loadedRuns.forEach(({ meta, rows }) => {
-    const { csv, fname } = buildTargetSampleCqCsv(meta, rows);
+  loadedRuns.forEach(({ meta, rows, threshold }) => {
+    const updatedRows = rows.map(r => {
+      const calcCt = calculateCtAtThreshold(r.drn, threshold);
+      return {
+        ...r,
+        cq: (calcCt !== null && isFinite(calcCt) && calcCt > 0) ? calcCt : r.cq
+      };
+    });
+    const { csv, fname } = buildTargetSampleCqCsv(meta, updatedRows);
     zip.file(fname, csv);
   });
 
@@ -779,7 +1141,7 @@ async function processFile(file){
     `;
 
     if (!rows.length){
-      statusEl.textContent = "No wells found.";
+      statusEl.textContent = "No reactions or fluorescence data identified.";
       return;
     }
 
@@ -820,7 +1182,7 @@ async function processFile(file){
     updatePipelineOptions();
 
   } catch(err) {
-    statusEl.textContent = "Parse failed";
+    statusEl.textContent = "Parse failed: " + err.message;
     console.error(err);
   }
 }
