@@ -1,0 +1,1454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QS Run Analyzer</title>
+
+<!-- Third-party libraries -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bpx-forest-deep: #1B5E20;
+    --bpx-forest-mid:  #2E7D32;
+    --bpx-forest-light:#E8F5E9;
+    --bpx-teal:        #1B7A8C;
+    --bpx-teal-hover:  #145E6C;
+    --bpx-teal-dim:    #E3EEF0;
+    --bpx-navy:        #12313F;
+    --bpx-bg:          #F5F6F8;
+    --bpx-panel:       #FFFFFF;
+    --bpx-line:        #DDE1E6;
+    --bpx-ink:         #1B2229;
+    --bpx-muted:       #657080;
+    --bpx-red:         #C0392B;
+    --bpx-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --bpx-font-mono: "IBM Plex Mono", Consolas, Menlo, monospace;
+    --bpx-radius-sm: 4px;
+    --bpx-radius-md: 8px;
+    --bpx-radius-lg: 10px;
+    --bpx-shadow-sm: 0 1px 3px rgba(18, 49, 63, 0.05);
+    --bpx-shadow-md: 0 4px 12px rgba(18, 49, 63, 0.08);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bpx-bg); color: var(--bpx-ink);
+    font-family: var(--bpx-font-sans); -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 24px 20px 80px; }
+  .wrap { max-width: 1360px; margin: 0 auto; }
+
+  header.brand-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--bpx-line);
+  }
+  .brand-logo-area { display: flex; align-items: center; gap: 16px; }
+  .brand-logo-area img { height: 38px; width: auto; }
+  .brand-title h1 {
+    font-size: 22px; margin: 0; font-weight: 700; color: var(--bpx-navy); letter-spacing: -0.02em;
+  }
+  .brand-title p { margin: 2px 0 0; color: var(--bpx-muted); font-size: 13.5px; }
+
+  .dropzone {
+    border: 1.5px dashed #B2BEC8; border-radius: var(--bpx-radius-lg); background: var(--bpx-panel);
+    padding: 26px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+    box-shadow: var(--bpx-shadow-sm);
+  }
+  .dropzone.drag { border-color: var(--bpx-forest-mid); background: var(--bpx-forest-light); }
+  .dropzone strong { color: var(--bpx-forest-deep); font-size: 15px; }
+  .dropzone .hint { color: var(--bpx-muted); font-size: 13px; margin-top: 4px; }
+  .dropzone input { display: none; }
+
+  .global-bar {
+    display: none; justify-content: space-between; align-items: center;
+    background: var(--bpx-panel); border: 1px solid var(--bpx-line); border-radius: var(--bpx-radius-md);
+    padding: 12px 18px; margin-top: 16px; box-shadow: var(--bpx-shadow-sm);
+  }
+  .global-bar span { font-size: 13.5px; font-weight: 600; color: var(--bpx-navy); }
+
+  button, .btn {
+    font-family: var(--bpx-font-sans); font-size: 13px; font-weight: 600; border-radius: var(--bpx-radius-sm);
+    border: 1px solid var(--bpx-forest-deep); background: var(--bpx-forest-deep); color: #fff;
+    padding: 7px 14px; cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s;
+  }
+  button:hover { background: var(--bpx-forest-mid); border-color: var(--bpx-forest-mid); }
+  button.accent { background: var(--bpx-teal); border-color: var(--bpx-teal); }
+  button.accent:hover { background: var(--bpx-teal-hover); border-color: var(--bpx-teal-hover); }
+  button.secondary { background: #fff; color: var(--bpx-forest-deep); border-color: var(--bpx-forest-deep); }
+  button.secondary:hover { background: var(--bpx-forest-light); }
+  button:disabled { opacity: .5; cursor: default; }
+
+  #pipelineSection {
+    display: none; margin-top: 24px; background: var(--bpx-panel); border: 1px solid var(--bpx-line);
+    border-radius: var(--bpx-radius-lg); overflow: hidden; box-shadow: var(--bpx-shadow-md);
+  }
+  .pipeline-header {
+    background: #FAFBFC; padding: 14px 20px; border-bottom: 1px solid var(--bpx-line);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .pipeline-header h2 { margin: 0; font-size: 16px; color: var(--bpx-navy); font-weight: 700; }
+
+  .pipeline-grid {
+    display: grid; grid-template-columns: 290px 1fr; min-height: 600px;
+  }
+  @media(max-width: 960px) { .pipeline-grid { grid-template-columns: 1fr; } }
+
+  .pipeline-sidebar {
+    background: #FDFDFE; border-right: 1px solid var(--bpx-line); padding: 18px 16px;
+    display: flex; flex-direction: column; gap: 14px; overflow-y: auto;
+  }
+  .pipeline-sidebar label { font-size: 12px; font-weight: 650; color: var(--bpx-navy); margin-bottom: 4px; display: block; }
+  .pipeline-sidebar select, .pipeline-sidebar input[type="number"] {
+    width: 100%; border: 1px solid var(--bpx-line); border-radius: var(--bpx-radius-sm); padding: 6px 8px; font-size: 12.5px;
+    color: var(--bpx-ink); background: #fff;
+  }
+  .pipeline-sidebar select[multiple] { height: 95px; }
+
+  .pipeline-panel { padding: 18px 20px; display: flex; flex-direction: column; gap: 16px; }
+  .tabs { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--bpx-line); padding-bottom: 8px; }
+  .tab-group { display: flex; gap: 8px; }
+  .tab-btn {
+    background: #ECEFF1; border: none; color: var(--bpx-muted); padding: 6px 14px; border-radius: var(--bpx-radius-sm);
+    cursor: pointer; font-size: 13px; font-weight: 600; transition: background .12s, color .12s;
+  }
+  .tab-btn.active { background: var(--bpx-forest-deep); color: #fff; }
+
+  #plotCanvas { width: 100%; min-height: 520px; }
+
+  #runs { margin-top: 24px; display: flex; flex-direction: column; gap: 20px; }
+  .run { background: var(--bpx-panel); border: 1px solid var(--bpx-line); border-radius: var(--bpx-radius-md); overflow: hidden; box-shadow: var(--bpx-shadow-sm); }
+  .run-head {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+    padding: 14px 18px; border-bottom: 1px solid var(--bpx-line); background: #FAFBFD;
+  }
+  .run-head h3 { margin: 0 0 6px; font-size: 15px; color: var(--bpx-navy); font-weight: 700; }
+  .meta-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 4px 16px;
+    font-size: 12px; color: var(--bpx-muted);
+  }
+  .meta-grid span { color: var(--bpx-ink); font-weight: 600; }
+  .table-scroll { max-height: 280px; overflow: auto; border-top: 1px solid var(--bpx-line); }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  thead th { position: sticky; top: 0; background: #F3F5F7; text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--bpx-line); font-weight: 650; color: var(--bpx-navy); }
+  tbody td { padding: 6px 12px; border-bottom: 1px solid #EEF0F2; white-space: nowrap; font-family: var(--bpx-font-mono); }
+  tbody td.txt { font-family: var(--bpx-font-sans); }
+  tbody tr:hover { background: #FAFBFD; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="brand-header">
+    <div class="brand-logo-area">
+      <img src="https://biopathogenix.com/wp-content/uploads/2021/07/BioPathogenix-Horizontal-1.svg" alt="BioPathogenix Logo" onerror="this.style.display='none'">
+      <div class="brand-title">
+        <h1>QS Run Analyzer</h1>
+        <p>Direct Instrument Runs & Re-analyzed Software Files Supported</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="dropzone" id="dropzone">
+    <strong>Drop .eds files here</strong> or click to choose
+    <div class="hint">Accepts both original instrument runs and analyzed copies (QuantStudio Base, QS1, QS3, QS5, QS6, QS7, QS12K)</div>
+    <input type="file" id="fileInput" accept=".eds" multiple>
+  </div>
+
+  <div class="global-bar" id="globalBar">
+    <span id="globalSummary">0 files processed</span>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--bpx-navy);cursor:pointer;">
+        <input type="checkbox" id="showTablesToggle"> Show all tables
+      </label>
+      <button id="downloadAllBtn">Download All CSVs (Target, Sample, Threshold, Cq)</button>
+    </div>
+  </div>
+
+  <div id="pipelineSection">
+    <div class="pipeline-header">
+      <h2>Interactive Run Analysis & Target-Specific Thresholds</h2>
+      <div style="display: flex; gap: 8px;">
+        <button class="secondary" id="exportPlotImgBtn">Export Plot as PNG</button>
+        <button class="secondary" id="exportExcelBtn">Export Summary to Excel</button>
+      </div>
+    </div>
+    <div class="pipeline-grid">
+      <div class="pipeline-sidebar">
+        <div>
+          <label for="runSelector">Select Run File:</label>
+          <select id="runSelector"></select>
+        </div>
+        <div>
+          <label for="targetSelector">Targets:</label>
+          <select id="targetSelector" multiple></select>
+        </div>
+        <div>
+          <label for="sampleSelector">Samples:</label>
+          <select id="sampleSelector" multiple></select>
+        </div>
+        <hr style="border:0;border-top:1px solid var(--bpx-line);margin:2px 0;">
+        <div>
+          <label>Color By:</label>
+          <label style="font-weight:400;"><input type="radio" name="colorBy" value="target" checked> Target</label>
+          <label style="font-weight:400;"><input type="radio" name="colorBy" value="sample"> Sample</label>
+        </div>
+        <div>
+          <label>Plot Mode:</label>
+          <label style="font-weight:400;"><input type="radio" name="plotMode" value="all" checked> All Replicates</label>
+          <label style="font-weight:400;"><input type="radio" name="plotMode" value="average"> Average Curves</label>
+        </div>
+        <hr style="border:0;border-top:1px solid var(--bpx-line);margin:2px 0;">
+        <div>
+          <label style="font-weight:600;"><input type="checkbox" id="filterByCtCheck"> Filter by Ct &lt; 34</label>
+        </div>
+        <div>
+          <label for="cqConfSlider" style="font-weight:600;">Minimum Cq Conf from EDS: <span id="cqConfValue" style="font-family:var(--bpx-font-mono);">0.00</span></label>
+          <input type="range" id="cqConfSlider" min="0" max="1" step="0.01" value="0" style="width:100%; accent-color:var(--bpx-forest-deep);">
+          <div id="cqConfInfo" style="font-size:11px;color:var(--bpx-muted);margin-top:2px;line-height:1.35;">0.00 keeps all reactions. Raise the slider to exclude reactions with lower EDS Cq confidence.</div>
+        </div>
+        <div>
+          <label style="font-weight:600;"><input type="checkbox" id="useEdsThresholdCheck"> Use threshold value from EDS file</label>
+          <div id="edsThresholdInfo" style="font-size:11px;color:var(--bpx-muted);margin:3px 0 8px 20px;line-height:1.35;">EDS threshold not detected.</div>
+          <label>Target-Specific dRn Thresholds (or drag line):</label>
+          <div id="targetThresholdContainer" style="display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto; padding:4px; border:1px solid var(--bpx-line); border-radius:var(--bpx-radius-sm); background:#fff;">
+            <!-- Dynamically populated target inputs go here -->
+          </div>
+          <button class="accent" id="autoThresholdBtn" style="width:100%; margin-top:8px; padding:5px;">⚡ Auto-Calculate All Thresholds</button>
+        </div>
+        <div>
+          <label style="font-weight:400;"><input type="checkbox" id="logScaleToggle"> Logarithmic Y-axis</label>
+        </div>
+      </div>
+
+      <div class="pipeline-panel">
+        <div class="tabs">
+          <div class="tab-group">
+            <button class="tab-btn active" data-tab="plot">Amplification Curves</button>
+            <button class="tab-btn" data-tab="table" style="display:none;">Calculated Ct Table</button>
+          </div>
+          <span style="font-size: 11.5px; color: var(--bpx-muted);">Tip: Drag individual threshold lines on the plot or edit values on the left</span>
+        </div>
+        <div id="plotView">
+          <div id="plotCanvas"></div>
+        </div>
+        <div id="tableView" style="display:none;">
+          <div class="table-scroll">
+            <table id="pipelineDataTable">
+              <thead><tr><th>Target</th><th class="txt">Sample</th><th>Cq</th><th>Cq Conf</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="runs"></div>
+</div>
+
+<script>
+const PALETTE = [
+  "#1B5E20", "#1B7A8C", "#B9770E", "#7A4CA0", "#2E8B57",
+  "#C0392B", "#2C6FBB", "#8D6E63", "#C2185B", "#5D8AA8",
+  "#E67E22", "#166B7A", "#3366cc", "#dc3912", "#109618"
+];
+
+const INSTRUMENT_LOOKUP = {
+  "QUANTSTUDIO": "QuantStudio™ System",
+  "QUANTSTUDIO™": "QuantStudio™ System",
+  "QS": "QuantStudio™ System",
+  "QS5": "QuantStudio™ 5 System",
+  "QUANTSTUDIO 5": "QuantStudio™ 5 System",
+  "QUANTSTUDIO™ 5": "QuantStudio™ 5 System",
+  "QS1": "QuantStudio™ 1 System",
+  "QUANTSTUDIO 1": "QuantStudio™ 1 System",
+  "QUANTSTUDIO™ 1": "QuantStudio™ 1 System",
+  "QS3": "QuantStudio™ 3 System",
+  "QUANTSTUDIO 3": "QuantStudio™ 3 System",
+  "QUANTSTUDIO™ 3": "QuantStudio™ 3 System",
+  "QS6": "QuantStudio™ 6 Pro System",
+  "QS7": "QuantStudio™ 7 Pro System",
+  "QS7FLEX": "QuantStudio™ 7 Flex System",
+  "QS12K": "QuantStudio™ 12K Flex System"
+};
+
+function normalizeInstrumentName(rawType) {
+  if (!rawType) return "QuantStudio™ System";
+  const cleaned = String(rawType).trim();
+  const key = cleaned.toUpperCase().replace(/\s+/g, " ");
+  if (INSTRUMENT_LOOKUP[key]) return INSTRUMENT_LOOKUP[key];
+  for (const [pattern, val] of Object.entries(INSTRUMENT_LOOKUP)) {
+    if (key.includes(pattern)) return val;
+  }
+  return cleaned.startsWith("QuantStudio") ? cleaned : `QuantStudio™ (${cleaned})`;
+}
+
+const BLOCK_TYPE_GRID = {
+  BLOCK_384W: [16, 24], BLOCK_96W: [8, 12], BLOCK_FAST96: [8, 12], BLOCK_24W: [4, 6], BLOCK_6W: [2, 3]
+};
+const INSTRUMENT_TZ = "America/New_York";
+
+function blockTypeGrid(blockType){ return BLOCK_TYPE_GRID[blockType] || [8, 12]; }
+function wellIndexToPosition(idx, nCols){
+  const r = Math.floor(idx / nCols), c = (idx % nCols) + 1;
+  const label = r < 26 ? String.fromCharCode(65 + r) : String.fromCharCode(65 + Math.floor(r/26) - 1) + String.fromCharCode(65 + (r%26));
+  return `${label}${c}`;
+}
+function formatInstrumentTime(epochMs){
+  if (!epochMs) return "";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: INSTRUMENT_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true, timeZoneName: "short"
+  }).formatToParts(new Date(epochMs));
+  const g = t => parts.find(p => p.type === t)?.value || "";
+  return `${g("year")}-${g("month")}-${g("day")} ${g("hour")}:${g("minute")}:${g("second")} ${g("dayPeriod")} ${g("timeZoneName")}`;
+}
+function formatDuration(s, e){
+  if (!s || !e) return "";
+  const sec = Math.round((e - s) / 1000);
+  return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+}
+function csvField(v){ return `"${String(v).replace(/"/g, '""')}"`; }
+function pad(n){ return String(n).padStart(2, "0"); }
+
+function findZipEntry(zip, nameOrPattern){
+  if (typeof nameOrPattern === "string"){
+    const exact = zip.file(nameOrPattern);
+    if (exact) return exact;
+  }
+  const reg = typeof nameOrPattern === "string"
+    ? new RegExp("(?:^|/)" + nameOrPattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i")
+    : nameOrPattern;
+  const match = Object.keys(zip.files).find(k => reg.test(k) && !zip.files[k].dir);
+  return match ? zip.file(match) : null;
+}
+
+async function readJson(zip, nameOrPattern){
+  const entry = findZipEntry(zip, nameOrPattern);
+  if (!entry) return {};
+  try {
+    const txt = await entry.async("string");
+    const safe = txt.replace(/:\s*-?Infinity\b/g, ": null").replace(/:\s*NaN\b/g, ": null");
+    return JSON.parse(safe);
+  } catch(e){ return {}; }
+}
+
+async function readXml(zip, nameOrPattern){
+  const entry = findZipEntry(zip, nameOrPattern);
+  if (!entry) return null;
+  try {
+    return await entry.async("string");
+  } catch(e){ return null; }
+}
+
+function parseMulticomponentXml(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, "text/xml");
+  const wellDyeData = {};
+
+  function getFloats(node) {
+    if (!node) return [];
+    const cycles = node.querySelectorAll("cycle, CYCLE, Cycle, val, VAL, Val, point, POINT");
+    if (cycles.length > 0) {
+      return Array.from(cycles).map(c => parseFloat(c.textContent.trim())).filter(isFinite);
+    }
+    const txt = node.textContent || "";
+    return txt.trim().split(/[\s,;]+/).map(v => parseFloat(v)).filter(isFinite);
+  }
+
+  const dyeDataNodes = doc.querySelectorAll("DyeData");
+  if (dyeDataNodes.length > 0) {
+    const wellDyeOrder = {};
+    dyeDataNodes.forEach(node => {
+      const wIdx = parseInt(node.getAttribute("WellIndex"), 10);
+      const listEl = node.querySelector("DyeList");
+      const txt = listEl ? listEl.textContent.trim() : "";
+      const dyes = txt.replace(/^\[|\]$/g, "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+      wellDyeOrder[wIdx] = dyes;
+    });
+
+    const signalDataNodes = doc.querySelectorAll("SignalData");
+    signalDataNodes.forEach(node => {
+      const wIdx = parseInt(node.getAttribute("WellIndex"), 10);
+      const wNum = wIdx + 1;
+      const dyes = wellDyeOrder[wIdx] || [];
+      if (!wellDyeData[wNum]) wellDyeData[wNum] = {};
+      const cycleNodes = node.querySelectorAll("CycleData");
+      cycleNodes.forEach((cNode, i) => {
+        const dName = dyes[i];
+        if (!dName) return;
+        const ctxt = (cNode.textContent || "").trim().replace(/^\[|\]$/g, "");
+        const vals = ctxt.split(",").map(v => parseFloat(v)).filter(isFinite);
+        if (vals.length) wellDyeData[wNum][dName] = vals;
+      });
+    });
+
+    if (Object.keys(wellDyeData).length > 0) return wellDyeData;
+  }
+
+  const wellNodes = doc.querySelectorAll("well, WELL, Well, w, W");
+  if (wellNodes.length > 0) {
+    wellNodes.forEach((wNode, wIdx) => {
+      const wAttr = wNode.getAttribute("id") || wNode.getAttribute("number") || 
+                    wNode.getAttribute("wellIndex") || wNode.getAttribute("index") ||
+                    wNode.getAttribute("wID") || wNode.getAttribute("pos");
+      const wNum = wAttr ? (parseInt(wAttr, 10) + (wAttr.toLowerCase().includes("index") ? 1 : 0)) : (wIdx + 1);
+      if (!wellDyeData[wNum]) wellDyeData[wNum] = {};
+
+      const dyeNodes = wNode.querySelectorAll("dye, DYE, Dye, channel, CHANNEL, Channel, d, D");
+      dyeNodes.forEach(dNode => {
+        const dName = (dNode.getAttribute("name") || dNode.getAttribute("id") || 
+                       dNode.getAttribute("dye") || dNode.getAttribute("dyeName") || "FAM").trim().toUpperCase();
+        const targetNode = dNode.querySelector("signal, SIGNAL, values, VALUES, data, DATA, raw, RAW") || dNode;
+        const vals = getFloats(targetNode);
+        if (vals.length) wellDyeData[wNum][dName] = vals;
+      });
+    });
+  }
+
+  return wellDyeData;
+}
+
+function calculateCtAtThreshold(drnCurve, threshold){
+  if (!drnCurve || drnCurve.length < 2) return null;
+  for (let i = 0; i < drnCurve.length - 1; i++){
+    const y1 = drnCurve[i], y2 = drnCurve[i+1];
+    if (y1 <= threshold && y2 >= threshold && y2 > y1){
+      const fraction = (threshold - y1) / (y2 - y1);
+      return (i + 1) + fraction;
+    }
+  }
+  return null;
+}
+
+function extractEdsThresholds(analysisSetting, targets, scaleFactor = 1){
+  const result = { defaultRaw: null, defaultScaled: null, byTarget: {} };
+  const defaultCt = analysisSetting && analysisSetting.defaultCtSetting ? analysisSetting.defaultCtSetting : {};
+  const rawDefault = Number(defaultCt.threshold);
+  if (isFinite(rawDefault) && rawDefault > 0) {
+    result.defaultRaw = rawDefault;
+    result.defaultScaled = rawDefault * scaleFactor;
+  }
+
+  // QuantStudio files can contain target-specific analysis settings in different structures.
+  // Walk the analysis-setting object and collect objects that identify a target and a threshold.
+  function walk(node){
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+
+    const name = node.targetName || node.detectorName || node.assayName ||
+                 (node.target && (node.target.name || node.target.targetName)) || null;
+    let threshold = null;
+    if (node.ctSetting && isFinite(Number(node.ctSetting.threshold))) threshold = Number(node.ctSetting.threshold);
+    else if (node.cqSetting && isFinite(Number(node.cqSetting.threshold))) threshold = Number(node.cqSetting.threshold);
+    else if (name && isFinite(Number(node.threshold))) threshold = Number(node.threshold);
+
+    if (name && threshold !== null && threshold > 0) {
+      result.byTarget[String(name)] = threshold * scaleFactor;
+    }
+    Object.values(node).forEach(walk);
+  }
+  walk(analysisSetting);
+
+  // If only a global EDS threshold is stored, make it available to every target.
+  if (result.defaultScaled !== null) {
+    (targets || []).forEach(t => {
+      if (result.byTarget[t] === undefined) result.byTarget[t] = result.defaultScaled;
+    });
+  }
+  return result;
+}
+
+function getThresholdForTarget(run, target){
+  if (run && run.useEdsThreshold && run.edsThresholdMap && isFinite(run.edsThresholdMap[target])) {
+    return run.edsThresholdMap[target];
+  }
+  return (run && run.thresholdMap && isFinite(run.thresholdMap[target])) ? run.thresholdMap[target] : 1000;
+}
+
+async function parseEds(file){
+  const zip = await JSZip.loadAsync(file);
+
+  const [summary, runSummary, runMethod, analysisSetting, analysisResult] = await Promise.all([
+    readJson(zip, "summary.json"),
+    readJson(zip, "run_summary.json"),
+    readJson(zip, "run_method.json"),
+    readJson(zip, "analysis_setting.json"),
+    readJson(zip, "analysis_result.json"),
+  ]);
+
+  const blockType = summary.blockType || "BLOCK_96W";
+  const [ , nCols ] = blockTypeGrid(blockType);
+
+  const rows = [];
+  const ampRecords = [];
+
+  const wellResults = analysisResult.wellResults || [];
+  // Native analyzed deltaRn values use QuantStudio threshold units directly.
+  // The fallback multicomponent reconstruction below scales Rn by 10,000.
+  const drnScaleFactor = wellResults.length > 0 ? 1 : 10000;
+
+  if (wellResults.length > 0) {
+    for (const well of wellResults){
+      const wNum = well.wellIndex + 1;
+      const pos = wellIndexToPosition(well.wellIndex, nCols);
+      const sample = well.sampleName || "Unnamed";
+
+      for (const rxn of (well.reactionResults || [])){
+        const target = rxn.targetName || "Target";
+        const omitted = !!rxn.omitted;
+        const amp = rxn.amplificationResult || {};
+        const rn = amp.rn || [];
+        const drn = amp.deltaRn || [];
+
+        for (let i = 0; i < rn.length; i++){
+          ampRecords.push({
+            well: wNum, pos, cycle: i + 1, target,
+            rn: rn[i], drn: drn[i], sample, omit: omitted ? "TRUE" : "FALSE"
+          });
+        }
+
+        rows.push({
+          well: wNum, pos, sample, target,
+          cq: amp.cq, cqConf: amp.cqConf, ampStatus: amp.ampStatus, omitted,
+          flags: (amp.flags || []).join(";"), drn, rn
+        });
+      }
+    }
+  } else {
+    const detectorRegistry = {};
+    const plateSetupJson = await readJson(zip, "plate_setup.json");
+    const jsonRoot = plateSetupJson.plateSetup || plateSetupJson;
+
+    const jsonDetectors = jsonRoot.detectors || jsonRoot.assays || jsonRoot.targets || [];
+    jsonDetectors.forEach((d, idx) => {
+      const id = String(d.id !== undefined ? d.id : (d.detectorId !== undefined ? d.detectorId : idx));
+      const name = d.name || d.targetName || d.detectorName || d.assayName || `Target_${id}`;
+      const reporter = (d.reporter || d.reporterDye || d.dye || "FAM").trim().toUpperCase();
+      detectorRegistry[id] = { targetName: name, reporter };
+    });
+
+    let setupWells = jsonRoot.wells || [];
+
+    if (!setupWells.length || Object.keys(detectorRegistry).length === 0) {
+      const xmlTxt = await readXml(zip, "plate_setup.xml");
+      if (xmlTxt) {
+        const doc = new DOMParser().parseFromString(xmlTxt, "text/xml");
+        const globalTargets = doc.querySelectorAll("detector, DETECTOR, target, TARGET, assay, ASSAY, feature, FEATURE");
+        globalTargets.forEach((tn, idx) => {
+          const id = tn.getAttribute("id") || tn.getAttribute("detectorId") || tn.getAttribute("assayId") || String(idx);
+          const name = tn.getAttribute("name") || tn.getAttribute("targetName") || tn.getAttribute("detectorName") || tn.getAttribute("assayName");
+          const reporter = (tn.getAttribute("reporter") || tn.getAttribute("reporterDye") || tn.getAttribute("dye") || "FAM").trim().toUpperCase();
+          if (name && !detectorRegistry[id]) {
+            detectorRegistry[id] = { targetName: name.trim(), reporter };
+          }
+        });
+
+        if (!setupWells.length) {
+          const wNodes = doc.querySelectorAll("well, WELL, Well");
+          wNodes.forEach((wn, idx) => {
+            const wId = wn.getAttribute("id") || wn.getAttribute("number") || wn.getAttribute("wID");
+            const wIdx = wId ? (parseInt(wId, 10) - 1) : idx;
+            const sampleEl = wn.querySelector("sample, SAMPLE, Sample");
+            const sampleName = sampleEl ? (sampleEl.getAttribute("name") || sampleEl.getAttribute("id") || sampleEl.textContent.trim()) : "";
+
+            const rxns = [];
+            const refEls = wn.querySelectorAll("detectorRef, targetRef, featureRef, assayRef, detector, target, feature, assay");
+            refEls.forEach(tn => {
+              const refId = tn.getAttribute("id") || tn.getAttribute("ref") || tn.getAttribute("detectorId") || tn.getAttribute("targetId") || tn.getAttribute("assayId");
+              let tName = tn.getAttribute("name") || tn.getAttribute("targetName") || tn.getAttribute("detectorName");
+              let rep = (tn.getAttribute("reporter") || tn.getAttribute("reporterDye") || tn.getAttribute("dye") || "").trim().toUpperCase();
+
+              if (refId && detectorRegistry[refId]) {
+                tName = tName || detectorRegistry[refId].targetName;
+                rep = rep || detectorRegistry[refId].reporter;
+              }
+
+              if (tName) {
+                rxns.push({
+                  targetName: tName.trim(),
+                  reporter: rep || "FAM",
+                  omitted: tn.getAttribute("omitted") === "true"
+                });
+              }
+            });
+
+            setupWells.push({
+              wellIndex: wIdx,
+              sampleName,
+              reactions: rxns
+            });
+          });
+        }
+      }
+    }
+
+    let wellDyeSignals = {};
+    const mcdJson = await readJson(zip, "multicomponent_data.json");
+    const mcdWells = mcdJson.wellMulticomponents || mcdJson.wells || [];
+    if (mcdWells.length) {
+      mcdWells.forEach((w, idx) => {
+        const wIdx = w.wellIndex !== undefined ? w.wellIndex : idx;
+        const wNum = wIdx + 1;
+        wellDyeSignals[wNum] = {};
+        (w.dyes || w.channels || []).forEach(d => {
+          const dName = (d.dyeName || d.name || d.dye || "").trim().toUpperCase();
+          const sigs = d.signals || d.signal || d.values || [];
+          if (dName && sigs.length) wellDyeSignals[wNum][dName] = sigs;
+        });
+      });
+    }
+
+    if (Object.keys(wellDyeSignals).length === 0) {
+      const mcdXml = await readXml(zip, "multicomponentdata.xml");
+      if (mcdXml) {
+        wellDyeSignals = parseMulticomponentXml(mcdXml);
+      }
+    }
+
+    if (!setupWells.length && Object.keys(wellDyeSignals).length > 0) {
+      Object.keys(wellDyeSignals).forEach(wNumStr => {
+        const wNum = parseInt(wNumStr, 10);
+        const dyes = Object.keys(wellDyeSignals[wNum]).filter(d => d !== "ROX");
+        const rxns = dyes.map(d => ({ targetName: d, reporter: d, omitted: false }));
+        setupWells.push({
+          wellIndex: wNum - 1,
+          sampleName: `Well_${wNum}`,
+          reactions: rxns.length ? rxns : [{ targetName: "Target", reporter: "FAM", omitted: false }]
+        });
+      });
+    }
+
+    const targetReporterByName = {};
+    (jsonRoot.targets || []).forEach(t => {
+      const tName = t.name || t.targetName;
+      if (tName) targetReporterByName[tName] = (t.reporter || "").trim().toUpperCase();
+    });
+
+    for (const w of setupWells){
+      const wIdx = w.wellIndex !== undefined ? w.wellIndex : (w.index !== undefined ? w.index : 0);
+      const wNum = wIdx + 1;
+      const pos = wellIndexToPosition(wIdx, nCols);
+      const sample = w.sampleName || w.sample?.name || (typeof w.sample === "string" ? w.sample : "") || "Unnamed";
+      
+      let rxns = w.reactions || w.reactionResults || w.targets || w.assays || [];
+
+      if (!rxns.length && w.targetAssignments && w.targetAssignments.length) {
+        rxns = w.targetAssignments.map(ta => {
+          const tName = ta.targetName || ta.name || "";
+          return {
+            targetName: tName,
+            reporter: targetReporterByName[tName] || "",
+            omitted: !!ta.omitted
+          };
+        });
+      }
+      
+      if (!rxns.length && (w.detectorRefs || w.detectors || w.features)) {
+        const refs = w.detectorRefs || w.detectors || w.features || [];
+        rxns = refs.map((ref, rIdx) => {
+          const rId = typeof ref === "object" ? (ref.id || ref.detectorId || ref.targetId || rIdx) : ref;
+          if (detectorRegistry[rId]) {
+            return {
+              targetName: detectorRegistry[rId].targetName,
+              reporter: detectorRegistry[rId].reporter,
+              omitted: !!ref.omitted
+            };
+          }
+          return { targetName: `Target_${rId}`, reporter: "FAM", omitted: false };
+        });
+      }
+
+      const dyeMap = wellDyeSignals[wNum] || {};
+      const rox = dyeMap["ROX"];
+      const nonRoxDyes = Object.keys(dyeMap).filter(d => d !== "ROX");
+
+      if (!rxns.length) {
+        rxns = nonRoxDyes.map(d => {
+          const matchKey = Object.keys(detectorRegistry).find(k => detectorRegistry[k].reporter === d);
+          const tName = matchKey ? detectorRegistry[matchKey].targetName : d;
+          return { targetName: tName, reporter: d, omitted: false };
+        });
+      }
+
+      if (!rxns.length) {
+        rxns = [{ targetName: "Target", reporter: "FAM", omitted: false }];
+      }
+
+      rxns.forEach((rxn, rxnIdx) => {
+        let target = rxn.targetName || rxn.target?.name || rxn.name || "";
+        const omitted = !!rxn.omitted;
+        let reporter = (rxn.reporter || rxn.reporterDye || rxn.dye || "").trim().toUpperCase();
+
+        if ((!target || target === "Target") && rxn.detectorId && detectorRegistry[rxn.detectorId]) {
+          target = detectorRegistry[rxn.detectorId].targetName;
+          reporter = reporter || detectorRegistry[rxn.detectorId].reporter;
+        }
+
+        if (!target) target = "Target";
+
+        let raw = dyeMap[reporter];
+        if (!raw || !raw.length) {
+          const fallbackDye = nonRoxDyes[rxnIdx] || nonRoxDyes[0];
+          raw = dyeMap[fallbackDye] || [];
+        }
+
+        const rn = [];
+        const drn = [];
+        if (raw.length) {
+          for (let i = 0; i < raw.length; i++) {
+            const val = (rox && rox[i] && rox[i] > 0) ? (raw[i] / rox[i]) * 10000 : raw[i];
+            rn.push(val);
+          }
+          const bStart = Math.min(2, Math.floor(rn.length * 0.08));
+          const bEnd = Math.min(15, Math.floor(rn.length * 0.35)) || 3;
+          const bSlice = rn.slice(bStart, bEnd);
+          const baseMean = bSlice.length ? (bSlice.reduce((a, b) => a + b, 0) / bSlice.length) : 0;
+          for (let i = 0; i < rn.length; i++) {
+            drn.push(rn[i] - baseMean);
+          }
+        }
+
+        const calculatedCq = calculateCtAtThreshold(drn, 1000);
+        const ampStatus = (calculatedCq !== null && calculatedCq > 0) ? "AMP" : "NOAMP";
+
+        for (let i = 0; i < rn.length; i++){
+          ampRecords.push({
+            well: wNum, pos, cycle: i + 1, target,
+            rn: rn[i], drn: drn[i], sample, omit: omitted ? "TRUE" : "FALSE"
+          });
+        }
+
+        rows.push({
+          well: wNum, pos, sample, target,
+          cq: calculatedCq, cqConf: 1.0, ampStatus, omitted,
+          flags: "", drn, rn
+        });
+      });
+    }
+  }
+
+  const rawInstrument = summary.instrumentType || runSummary.instrumentType || summary.instrumentName || "QuantStudio";
+  const instrumentType = normalizeInstrumentName(rawInstrument);
+
+  const targetsInRun = [...new Set(rows.map(r => r.target))];
+  const edsThresholds = extractEdsThresholds(analysisSetting, targetsInRun, drnScaleFactor);
+
+  const meta = {
+    fileName: file.name,
+    instrumentType: instrumentType,
+    blockType,
+    instrumentName: runSummary.instrumentName || summary.instrumentName || "QuantStudio",
+    instrumentSerial: runSummary.instrumentSerialNumber || summary.instrumentSerialNumber || summary.serialNumber || "",
+    blockSerial: runSummary.blockSerialNumber || summary.blockSerialNumber || "",
+    startTime: runSummary.startTime || summary.startTime || summary.runStartTime,
+    endTime: runSummary.endTime || summary.endTime || summary.runEndTime,
+    sampleVolume: runMethod.sampleVolume,
+    coverTemperature: runMethod.coverTemperature,
+    cqStage: analysisSetting.cqAnalysisStageNumber || 2,
+    cqStep: analysisSetting.cqAnalysisStepNumber || 2,
+    cqMethod: analysisSetting.cqAlgorithmType || "BASELINE_THRESHOLD",
+    edsThresholdRaw: edsThresholds.defaultRaw,
+    edsThresholdScaleFactor: drnScaleFactor
+  };
+
+  return { meta, rows, ampRecords, edsThresholdMap: edsThresholds.byTarget };
+}
+
+function buildEffectiveThresholdMap(run){
+  const out = {};
+  [...new Set(run.rows.map(r => r.target))].forEach(t => { out[t] = getThresholdForTarget(run, t); });
+  return out;
+}
+
+function buildTargetSampleCqCsv(meta, rows, thresholdMap){
+  const cols = ["Target", "Sample", "Threshold Used", "Cq"];
+  const lines = [cols.map(csvField).join(",")];
+  for (const r of rows){
+    const tVal = (thresholdMap && thresholdMap[r.target]) ? thresholdMap[r.target] : 1000;
+    const calcCt = calculateCtAtThreshold(r.drn, tVal);
+    const cqVal = (calcCt !== null && isFinite(calcCt) && calcCt > 0)
+      ? calcCt.toFixed(2)
+      : (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0 ? r.cq.toFixed(2) : "Undetermined");
+    lines.push([r.target, r.sample, tVal, cqVal].map(csvField).join(","));
+  }
+  const csv = lines.join("\r\n") + "\r\n";
+  const stem = meta.fileName.replace(/\.eds$/i, "");
+  const fname = `${stem}_Cq_Results.csv`;
+  return { csv, fname };
+}
+
+function buildParametersCsv(meta, rows, thresholdMap){
+  const metadataInfo = [
+    { "Parameter": "File Name", "Value": meta.fileName },
+    { "Parameter": "Instrument Type", "Value": meta.instrumentType },
+    { "Parameter": "Instrument Name", "Value": meta.instrumentName },
+    { "Parameter": "Block Type", "Value": meta.blockType },
+    { "Parameter": "Analysis Method", "Value": meta.cqMethod },
+    { "Parameter": "Total Reactions", "Value": rows.length }
+  ];
+
+  const targets = Object.keys(thresholdMap || {});
+  targets.forEach(t => {
+    metadataInfo.push({ "Parameter": `Threshold (${t})`, "Value": thresholdMap[t] });
+  });
+
+  const lines = [["Parameter", "Value"].map(csvField).join(",")];
+  metadataInfo.forEach(m => {
+    lines.push([m.Parameter, m.Value].map(csvField).join(","));
+  });
+
+  const csv = lines.join("\r\n") + "\r\n";
+  const stem = meta.fileName.replace(/\.eds$/i, "");
+  const fname = `${stem}_Analysis_Parameters.csv`;
+  return { csv, fname };
+}
+
+const loadedRuns = [];
+let activeRunIndex = 0;
+
+function updatePipelineOptions(){
+  const runSel = document.getElementById("runSelector");
+  runSel.innerHTML = "";
+  loadedRuns.forEach((r, idx) => {
+    const opt = document.createElement("option");
+    opt.value = idx;
+    opt.textContent = `${idx + 1}. ${r.meta.fileName}`;
+    runSel.appendChild(opt);
+  });
+  if (loadedRuns[activeRunIndex]) runSel.value = activeRunIndex;
+  populateTargetAndSampleSelectors();
+}
+
+function populateTargetAndSampleSelectors(){
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+
+  const targetSel = document.getElementById("targetSelector");
+  const sampleSel = document.getElementById("sampleSelector");
+
+  const targets = [...new Set(run.rows.map(r => r.target))].sort();
+  const samples = [...new Set(run.rows.map(r => r.sample))].sort();
+
+  targetSel.innerHTML = targets.map(t => `<option value="${t}" selected>${t}</option>`).join("");
+  sampleSel.innerHTML = samples.map(s => `<option value="${s}" selected>${s}</option>`).join("");
+
+  if (!run.thresholdMap) run.thresholdMap = {};
+  if (!Number.isFinite(run.cqConfCutoff)) run.cqConfCutoff = 0;
+  const cqSlider = document.getElementById("cqConfSlider");
+  const cqValue = document.getElementById("cqConfValue");
+  const cqInfo = document.getElementById("cqConfInfo");
+  if (cqSlider && cqValue) {
+    cqSlider.value = run.cqConfCutoff;
+    cqValue.textContent = run.cqConfCutoff.toFixed(2);
+    const confVals = run.rows.map(r => Number(r.cqConf)).filter(Number.isFinite);
+    cqSlider.disabled = confVals.length === 0;
+    if (cqInfo) {
+      if (confVals.length) {
+        const lo = Math.min(...confVals), hi = Math.max(...confVals);
+        cqInfo.textContent = `EDS Cq Conf available for ${confVals.length} reactions (range ${lo.toFixed(3)}–${hi.toFixed(3)}).`;
+      } else {
+        cqInfo.textContent = "No Cq confidence values were found in this EDS file.";
+      }
+    }
+  }
+  targets.forEach(t => {
+    if (run.thresholdMap[t] === undefined) {
+      run.thresholdMap[t] = 1000;
+    }
+  });
+
+  const edsCheck = document.getElementById("useEdsThresholdCheck");
+  const edsInfo = document.getElementById("edsThresholdInfo");
+  const hasEdsThreshold = !!run.edsThresholdMap && targets.some(t => isFinite(run.edsThresholdMap[t]));
+  edsCheck.disabled = !hasEdsThreshold;
+  edsCheck.checked = hasEdsThreshold && !!run.useEdsThreshold;
+  if (hasEdsThreshold) {
+    const raw = run.meta.edsThresholdRaw;
+    const scale = run.meta.edsThresholdScaleFactor || 1;
+    edsInfo.textContent = raw !== null && raw !== undefined
+      ? `EDS Ct threshold detected: ${raw}${scale !== 1 ? ` (plot scale: ${Number(raw * scale).toLocaleString()})` : ""}. Check the box to use it.`
+      : "Target-specific EDS thresholds detected. Check the box to use them.";
+  } else {
+    edsInfo.textContent = "No Ct threshold was found in this EDS file.";
+  }
+
+  renderTargetThresholdInputs();
+  renderPipelinePlot();
+}
+
+function renderTargetThresholdInputs() {
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+
+  const container = document.getElementById("targetThresholdContainer");
+  container.innerHTML = "";
+
+  const targets = [...new Set(run.rows.map(r => r.target))].sort();
+
+  targets.forEach(target => {
+    const currentVal = getThresholdForTarget(run, target);
+    
+    const row = document.createElement("div");
+    row.style.cssText = "display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px;";
+    
+    const label = document.createElement("span");
+    label.textContent = target;
+    label.style.cssText = "font-weight: 600; color: var(--bpx-navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px;";
+    label.title = target;
+
+    const input = document.createElement("input");
+    input.type = "number";
+    input.value = currentVal;
+    input.step = "50";
+    input.disabled = !!run.useEdsThreshold;
+    input.title = run.useEdsThreshold ? "Using threshold imported from EDS file" : "Manual threshold";
+    input.style.cssText = "width: 80px; padding: 3px 6px; border: 1px solid var(--bpx-line); border-radius: var(--bpx-radius-sm); font-family: var(--bpx-font-mono); font-size: 11.5px;";
+    
+    input.addEventListener("input", e => {
+      const val = parseFloat(e.target.value);
+      if (!isNaN(val)) {
+        run.thresholdMap[target] = val;
+        renderPipelinePlot(false);
+      }
+    });
+
+    row.appendChild(label);
+    row.appendChild(input);
+    container.appendChild(row);
+  });
+}
+
+function renderPipelinePlot(rebuildInputs = true){
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+
+  if (rebuildInputs) renderTargetThresholdInputs();
+
+  const targetSel = document.getElementById("targetSelector");
+  const sampleSel = document.getElementById("sampleSelector");
+  const selTargets = Array.from(targetSel.selectedOptions).map(o => o.value);
+  const selSamples = Array.from(sampleSel.selectedOptions).map(o => o.value);
+  const colorBy = document.querySelector('input[name="colorBy"]:checked').value;
+  const plotMode = document.querySelector('input[name="plotMode"]:checked').value;
+  const isLog = document.getElementById("logScaleToggle").checked;
+  const filterByCt = document.getElementById("filterByCtCheck").checked;
+  const cqConfCutoff = Number.isFinite(run.cqConfCutoff) ? run.cqConfCutoff : 0;
+
+  let filtered = run.rows.filter(r => selTargets.includes(r.target) && selSamples.includes(r.sample) && !r.omitted);
+
+  if (cqConfCutoff > 0) {
+    filtered = filtered.filter(r => {
+      const conf = Number(r.cqConf);
+      return Number.isFinite(conf) && conf >= cqConfCutoff;
+    });
+  }
+
+  if (filterByCt) {
+    filtered = filtered.filter(r => {
+      const tVal = getThresholdForTarget(run, r.target);
+      const ct = calculateCtAtThreshold(r.drn, tVal);
+      return ct !== null && ct < 34;
+    });
+  }
+
+  const distinctColorKeys = [...new Set(filtered.map(r => colorBy === "target" ? r.target : r.sample))].sort();
+  const colorMap = {};
+  distinctColorKeys.forEach((key, idx) => {
+    colorMap[key] = PALETTE[idx % PALETTE.length];
+  });
+
+  const traces = [];
+  const shownLegendKeys = new Set();
+
+  if (plotMode === "average"){
+    const groups = {};
+    filtered.forEach(r => {
+      const key = `${r.sample} | ${r.target}`;
+      if (!groups[key]) groups[key] = { drnList: [], target: r.target, sample: r.sample };
+      groups[key].drnList.push(r.drn);
+    });
+
+    for (const [key, grp] of Object.entries(groups)){
+      if (!grp.drnList.length || !grp.drnList[0].length) continue;
+      const avg = [];
+      for (let c = 0; c < grp.drnList[0].length; c++){
+        let sum = 0, count = 0;
+        for (let i = 0; i < grp.drnList.length; i++){
+          if (typeof grp.drnList[i][c] === "number"){ sum += grp.drnList[i][c]; count++; }
+        }
+        avg.push(count ? sum / count : 0);
+      }
+
+      const colorKey = colorBy === "target" ? grp.target : grp.sample;
+      const color = colorMap[colorKey] || "#1B5E20";
+
+      traces.push({
+        x: Array.from({length: avg.length}, (_, i) => i + 1),
+        y: avg,
+        mode: "lines",
+        name: key,
+        line: { color, width: 2.2 },
+        hoverinfo: "name+y"
+      });
+    }
+  } else {
+    filtered.forEach(r => {
+      if (!r.drn.length) return;
+
+      const colorKey = colorBy === "target" ? r.target : r.sample;
+      const color = colorMap[colorKey] || "#1B5E20";
+      const isFirst = !shownLegendKeys.has(colorKey);
+      if (isFirst) shownLegendKeys.add(colorKey);
+
+      traces.push({
+        x: Array.from({length: r.drn.length}, (_, i) => i + 1),
+        y: r.drn,
+        mode: "lines",
+        name: colorKey,
+        legendgroup: colorKey,
+        showlegend: isFirst,
+        line: { color, width: 1.4 },
+        opacity: 0.75,
+        hoverlabel: { namelength: -1 },
+        text: `${r.pos} (${r.sample} - ${r.target})`,
+        hovertemplate: "<b>%{text}</b><br>Cycle: %{x}<br>ΔRn: %{y:.1f}<extra></extra>"
+      });
+    });
+  }
+
+  const shapes = [];
+  const activeTargetsInPlot = [...new Set(filtered.map(r => r.target))];
+  
+  activeTargetsInPlot.forEach(tName => {
+    const tVal = getThresholdForTarget(run, tName);
+    shapes.push({
+      type: 'line',
+      xref: 'paper',
+      x0: 0,
+      x1: 1,
+      yref: 'y',
+      y0: tVal,
+      y1: tVal,
+      line: {
+        color: colorMap[tName] || '#C0392B',
+        width: 1.8,
+        dash: 'dash'
+      },
+      editable: true,
+      name: tName
+    });
+  });
+
+  const layout = {
+    title: {
+      text: `Amplification Curves: ${run.meta.fileName} (Target-Specific Thresholds Active)`,
+      font: { size: 14, color: "#12313F" }
+    },
+    xaxis: { title: "Cycle Number" },
+    yaxis: {
+      title: "ΔRn",
+      type: isLog ? "log" : "linear",
+      autorange: true
+    },
+    shapes: shapes,
+    margin: { t: 45, r: 20, b: 40, l: 65 },
+    hovermode: "closest",
+    legend: {
+      title: { text: `<b>${colorBy === 'target' ? 'Targets' : 'Samples'}</b>` },
+      orientation: "v",
+      x: 1.02,
+      y: 1
+    }
+  };
+
+  const plotDiv = document.getElementById("plotCanvas");
+  Plotly.react(plotDiv, traces, layout, { responsive: true, editable: true, displayModeBar: true });
+
+  plotDiv.removeAllListeners && plotDiv.removeAllListeners('plotly_relayout');
+  plotDiv.on('plotly_relayout', function(eventData) {
+    for (let i = 0; i < activeTargetsInPlot.length; i++) {
+      const tName = activeTargetsInPlot[i];
+      const y0Key = `shapes[${i}].y0`;
+      const y1Key = `shapes[${i}].y1`;
+
+      let newY = null;
+      if (eventData[y0Key] !== undefined) {
+        newY = eventData[y0Key];
+      } else if (eventData[y1Key] !== undefined) {
+        newY = eventData[y1Key];
+      }
+
+      if (newY !== null && isFinite(newY)) {
+        const rounded = Math.round(newY);
+        if (run.useEdsThreshold) {
+          run.useEdsThreshold = false;
+          document.getElementById("useEdsThresholdCheck").checked = false;
+        }
+        run.thresholdMap[tName] = rounded;
+        
+        const container = document.getElementById("targetThresholdContainer");
+        if (container) {
+          const inputs = container.querySelectorAll("input");
+          inputs.forEach(input => {
+            const rowLabel = input.previousElementSibling;
+            if (rowLabel && rowLabel.textContent === tName) {
+              input.value = rounded;
+            }
+          });
+        }
+        
+        renderPipelinePlot(false);
+        break;
+      }
+    }
+  });
+
+  const tbody = document.querySelector("#pipelineDataTable tbody");
+  tbody.innerHTML = filtered.map(r => {
+    const tVal = getThresholdForTarget(run, r.target);
+    const calcCt = calculateCtAtThreshold(r.drn, tVal);
+    const displayCq = (calcCt !== null && isFinite(calcCt) && calcCt > 0)
+      ? calcCt.toFixed(2)
+      : (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0 ? r.cq.toFixed(2) : "Undetermined");
+    return `
+      <tr>
+        <td class="txt"><strong>${r.target}</strong></td>
+        <td class="txt">${r.sample}</td>
+        <td>${displayCq}</td>
+        <td>${Number.isFinite(Number(r.cqConf)) ? Number(r.cqConf).toFixed(3) : "–"}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+const runsEl = document.getElementById("runs");
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("fileInput");
+const globalBar = document.getElementById("globalBar");
+const globalSummary = document.getElementById("globalSummary");
+const downloadAllBtn = document.getElementById("downloadAllBtn");
+const pipelineSection = document.getElementById("pipelineSection");
+const showTablesToggle = document.getElementById("showTablesToggle");
+
+function setAllTablesVisible(show) {
+  document.querySelectorAll(".run [data-body]").forEach(el => {
+    el.style.display = show ? "" : "none";
+  });
+
+  const tableTab = document.querySelector('.tab-btn[data-tab="table"]');
+  const plotTab = document.querySelector('.tab-btn[data-tab="plot"]');
+  const tableView = document.getElementById("tableView");
+  const plotView = document.getElementById("plotView");
+
+  if (tableTab) tableTab.style.display = show ? "" : "none";
+
+  if (!show) {
+    if (tableView) tableView.style.display = "none";
+    if (plotView) plotView.style.display = "";
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    if (plotTab) plotTab.classList.add("active");
+    if (window.Plotly && plotView) Plotly.Plots.resize("plotCanvas");
+  }
+}
+
+showTablesToggle.addEventListener("change", e => {
+  setAllTablesVisible(!!e.target.checked);
+});
+
+// Tables are hidden by default.
+setAllTablesVisible(false);
+
+dropzone.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", e => handleFiles(e.target.files));
+["dragenter", "dragover"].forEach(evt => dropzone.addEventListener(evt, e => {
+  e.preventDefault(); dropzone.classList.add("drag");
+}));
+["dragleave", "drop"].forEach(evt => dropzone.addEventListener(evt, e => {
+  e.preventDefault(); dropzone.classList.remove("drag");
+}));
+dropzone.addEventListener("drop", e => handleFiles(e.dataTransfer.files));
+
+function handleFiles(fileList){
+  [...fileList].filter(f => /\.eds$/i.test(f.name)).forEach(processFile);
+}
+
+document.getElementById("runSelector").addEventListener("change", e => {
+  activeRunIndex = parseInt(e.target.value, 10);
+  populateTargetAndSampleSelectors();
+});
+
+document.getElementById("targetSelector").addEventListener("change", renderPipelinePlot);
+document.getElementById("sampleSelector").addEventListener("change", renderPipelinePlot);
+document.querySelectorAll('input[name="colorBy"]').forEach(el => el.addEventListener("change", renderPipelinePlot));
+document.querySelectorAll('input[name="plotMode"]').forEach(el => el.addEventListener("change", renderPipelinePlot));
+document.getElementById("logScaleToggle").addEventListener("change", renderPipelinePlot);
+document.getElementById("filterByCtCheck").addEventListener("change", renderPipelinePlot);
+document.getElementById("cqConfSlider").addEventListener("input", e => {
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+  const val = Math.max(0, Math.min(1, parseFloat(e.target.value) || 0));
+  run.cqConfCutoff = val;
+  document.getElementById("cqConfValue").textContent = val.toFixed(2);
+  renderPipelinePlot(false);
+});
+document.getElementById("useEdsThresholdCheck").addEventListener("change", e => {
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+  run.useEdsThreshold = !!e.target.checked;
+  renderTargetThresholdInputs();
+  renderPipelinePlot(false);
+});
+
+document.getElementById("autoThresholdBtn").addEventListener("click", () => {
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+
+  run.useEdsThreshold = false;
+  document.getElementById("useEdsThresholdCheck").checked = false;
+  const baselineCycles = 15;
+  const targets = [...new Set(run.rows.map(r => r.target))];
+
+  targets.forEach(target => {
+    let targetBaseSignals = [];
+    run.rows.filter(r => r.target === target).forEach(r => {
+      if (r.drn && r.drn.length >= baselineCycles){
+        targetBaseSignals.push(...r.drn.slice(2, baselineCycles));
+      }
+    });
+
+    if (targetBaseSignals.length){
+      const mean = targetBaseSignals.reduce((a, b) => a + b, 0) / targetBaseSignals.length;
+      const variance = targetBaseSignals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / targetBaseSignals.length;
+      const sd = Math.sqrt(variance);
+      const autoThresh = Math.round(Math.max(mean + (10 * sd), 200));
+      run.thresholdMap[target] = autoThresh;
+    }
+  });
+
+  renderTargetThresholdInputs();
+  renderPipelinePlot(false);
+});
+
+document.getElementById("exportPlotImgBtn").addEventListener("click", () => {
+  const run = loadedRuns[activeRunIndex];
+  const filename = run ? `${run.meta.fileName.replace(/\.eds$/i, '')}_plot` : 'amplification_plot';
+  Plotly.downloadImage('plotCanvas', {
+    format: 'png',
+    width: 1200,
+    height: 700,
+    filename: filename
+  });
+});
+
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    if (btn.dataset.tab === "plot"){
+      document.getElementById("plotView").style.display = "";
+      document.getElementById("tableView").style.display = "none";
+      Plotly.Plots.resize("plotCanvas");
+    } else {
+      if (!showTablesToggle.checked) return;
+      document.getElementById("plotView").style.display = "none";
+      document.getElementById("tableView").style.display = "";
+    }
+  });
+});
+
+document.getElementById("exportExcelBtn").addEventListener("click", () => {
+  const run = loadedRuns[activeRunIndex];
+  if (!run) return;
+
+  const data = run.rows.map(r => {
+    const targetThresh = getThresholdForTarget(run, r.target);
+    const calcCt = calculateCtAtThreshold(r.drn, targetThresh);
+    const finalCq = (calcCt !== null && isFinite(calcCt) && calcCt > 0)
+      ? Number(calcCt.toFixed(2))
+      : (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0 ? Number(r.cq.toFixed(2)) : "Undetermined");
+    return {
+      "Target": r.target,
+      "Sample": r.sample,
+      "Threshold Used": targetThresh,
+      "Cq": finalCq
+    };
+  });
+
+  const effectiveThresholdMap = buildEffectiveThresholdMap(run);
+  const targets = Object.keys(effectiveThresholdMap);
+  const metadataInfo = [
+    { "Parameter": "File Name", "Value": run.meta.fileName },
+    { "Parameter": "Instrument Type", "Value": run.meta.instrumentType },
+    { "Parameter": "Instrument Name", "Value": run.meta.instrumentName },
+    { "Parameter": "Block Type", "Value": run.meta.blockType },
+    { "Parameter": "Analysis Method", "Value": run.meta.cqMethod },
+    { "Parameter": "Total Reactions", "Value": run.rows.length },
+    { "Parameter": "Threshold Source", "Value": run.useEdsThreshold ? "EDS file" : "Manual / Auto Analyzer" }
+  ];
+
+  targets.forEach(t => {
+    metadataInfo.push({ "Parameter": `Threshold (${t})`, "Value": effectiveThresholdMap[t] });
+  });
+
+  const wsResults = XLSX.utils.json_to_sheet(data);
+  const wsMeta = XLSX.utils.json_to_sheet(metadataInfo);
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsResults, "Cq_Results");
+  XLSX.utils.book_append_sheet(wb, wsMeta, "Analysis_Parameters");
+
+  XLSX.writeFile(wb, `${run.meta.fileName.replace(/\.eds$/i, '')}_Cq_Results.xlsx`);
+});
+
+downloadAllBtn.addEventListener("click", async () => {
+  if (!loadedRuns.length) return;
+
+  if (loadedRuns.length === 1) {
+    const run = loadedRuns[0];
+    const { meta, rows } = run;
+    const effectiveThresholdMap = buildEffectiveThresholdMap(run);
+    const { csv: resultsCsv, fname: resultsFname } = buildTargetSampleCqCsv(meta, rows, effectiveThresholdMap);
+    const { csv: paramsCsv, fname: paramsFname } = buildParametersCsv(meta, rows, effectiveThresholdMap);
+    
+    // Package both into a quick zip for consistency, or download results CSV
+    const zip = new JSZip();
+    zip.file(resultsFname, resultsCsv);
+    zip.file(paramsFname, paramsCsv);
+    const content = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(content);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${meta.fileName.replace(/\.eds$/i, '')}_Export.zip`; a.click();
+    URL.revokeObjectURL(url);
+    return;
+  }
+
+  downloadAllBtn.disabled = true;
+  downloadAllBtn.textContent = "Zipping Files…";
+
+  const zip = new JSZip();
+  loadedRuns.forEach(run => {
+    const { meta, rows } = run;
+    const effectiveThresholdMap = buildEffectiveThresholdMap(run);
+    const { csv: resultsCsv, fname: resultsFname } = buildTargetSampleCqCsv(meta, rows, effectiveThresholdMap);
+    const { csv: paramsCsv, fname: paramsFname } = buildParametersCsv(meta, rows, effectiveThresholdMap);
+    zip.file(resultsFname, resultsCsv);
+    zip.file(paramsFname, paramsCsv);
+  });
+
+  const content = await zip.generateAsync({ type: "blob" });
+  const url = URL.createObjectURL(content);
+  const a = document.createElement("a");
+  const d = new Date();
+  a.download = `All_Runs_Cq_Results_And_Parameters_${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}.zip`;
+  a.href = url;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  downloadAllBtn.disabled = false;
+  downloadAllBtn.textContent = "Download All CSVs (Target, Sample, Threshold, Cq)";
+});
+
+async function processFile(file){
+  const card = document.createElement("div");
+  card.className = "run";
+  card.innerHTML = `
+    <div class="run-head">
+      <div>
+        <h3>${file.name}</h3>
+        <div class="meta-grid" data-meta></div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+        <span style="font-size:12px;color:var(--bpx-muted)" data-status>Parsing…</span>
+        <button data-download disabled>Download CSV (Target/Sample/Threshold/Cq)</button>
+      </div>
+    </div>
+    <div class="table-scroll" style="display:none;" data-body>
+      <table>
+        <thead><tr><th>Target</th><th class="txt">Sample</th><th>Cq</th></tr></thead>
+        <tbody data-tbody></tbody>
+      </table>
+    </div>
+  `;
+  runsEl.appendChild(card);
+
+  const statusEl = card.querySelector("[data-status]");
+  const downloadBtn = card.querySelector("[data-download]");
+
+  try {
+    const { meta, rows, ampRecords, edsThresholdMap } = await parseEds(file);
+
+    card.querySelector("[data-meta]").innerHTML = `
+      <div>Instrument <span>${meta.instrumentType}</span></div>
+      <div>Start <span>${formatInstrumentTime(meta.startTime) || "–"}</span></div>
+      <div>Duration <span>${formatDuration(meta.startTime, meta.endTime) || "–"}</span></div>
+    `;
+
+    if (!rows.length){
+      statusEl.textContent = "No reactions or fluorescence data identified.";
+      return;
+    }
+
+    const hasEdsThreshold = edsThresholdMap && Object.keys(edsThresholdMap).length > 0;
+    const runRecord = {
+      id: loadedRuns.length, meta, rows, ampRecords, thresholdMap: {},
+      edsThresholdMap: edsThresholdMap || {},
+      useEdsThreshold: hasEdsThreshold
+    };
+    loadedRuns.push(runRecord);
+
+    globalBar.style.display = "flex";
+    globalSummary.textContent = `${loadedRuns.length} run${loadedRuns.length > 1 ? "s" : ""} loaded`;
+    pipelineSection.style.display = "block";
+
+    statusEl.textContent = `${rows.length} reactions`;
+    card.querySelector("[data-body]").style.display = showTablesToggle.checked ? "" : "none";
+
+    const tbody = card.querySelector("[data-tbody]");
+    tbody.innerHTML = rows.slice(0, 50).map(r => {
+      const displayCq = (r.cq !== null && r.cq !== undefined && isFinite(r.cq) && r.cq > 0)
+        ? r.cq.toFixed(2)
+        : "Undetermined";
+      return `
+        <tr>
+          <td class="txt"><strong>${r.target}</strong></td>
+          <td class="txt">${r.sample}</td>
+          <td>${displayCq}</td>
+        </tr>
+      `;
+    }).join("") + (rows.length > 50 ? `<tr><td colspan="3" style="text-align:center;color:var(--bpx-muted)">... ${rows.length - 50} more reactions ...</td></tr>` : "");
+
+    downloadBtn.disabled = false;
+    downloadBtn.addEventListener("click", async () => {
+      const effectiveThresholdMap = buildEffectiveThresholdMap(runRecord);
+      const { csv: resultsCsv, fname: resultsFname } = buildTargetSampleCqCsv(meta, rows, effectiveThresholdMap);
+      const { csv: paramsCsv, fname: paramsFname } = buildParametersCsv(meta, rows, effectiveThresholdMap);
+      
+      const zip = new JSZip();
+      zip.file(resultsFname, resultsCsv);
+      zip.file(paramsFname, paramsCsv);
+      const content = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(content);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${meta.fileName.replace(/\.eds$/i, '')}_Export.zip`; a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    updatePipelineOptions();
+
+  } catch(err) {
+    statusEl.textContent = "Parse failed: " + err.message;
+    console.error(err);
+  }
+}
+</script>
+</body>
+</html>
