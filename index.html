@@ -207,14 +207,14 @@
         </div>
         <hr style="border:0;border-top:1px solid var(--bpx-line);margin:2px 0;">
         
-        <!-- Max Ct Filter Slider -->
+        <!-- Minimum Ct Filter Slider -->
         <div>
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <label for="maxCtSlider" style="font-weight:600; margin:0;">Maximum Ct Filter:</label>
             <span id="maxCtValue" style="font-family:var(--bpx-font-mono); font-size:12px; font-weight:700; color:var(--bpx-navy);">Off</span>
           </div>
           <input type="range" id="maxCtSlider" min="10" max="45" step="0.5" value="45" style="width:100%; accent-color:var(--bpx-forest-deep); margin-top:5px;">
-          <div id="maxCtInfo" style="font-size:11px;color:var(--bpx-muted);margin-top:2px;line-height:1.35;">Slide left to remove targets/reactions exceeding Ct. 45 (Off) displays all.</div>
+          <div id="maxCtInfo" style="font-size:11px;color:var(--bpx-muted);margin-top:2px;line-height:1.35;">Slide right to remove reactions below the selected Ct. 0 (Off) displays all.</div>
         </div>
 
         <!-- Cq Conf Slider -->
@@ -492,6 +492,85 @@ function extractEdsThresholds(analysisSetting, targets, scaleFactor = 1){
     });
   }
   return result;
+}
+
+
+
+function extractLegacyXmlThresholds(xmlText, targets, scaleFactor = 1){
+  const result = { defaultRaw: null, defaultScaled: null, byTarget: {}, source: null };
+  if (!xmlText) return result;
+
+  try {
+    const doc = new DOMParser().parseFromString(xmlText, "text/xml");
+    if (doc.querySelector("parsererror")) return result;
+
+    const localChildren = (parent, localName) => Array.from(parent.children || []).filter(
+      el => (el.localName || el.tagName || "").toLowerCase() === localName.toLowerCase()
+    );
+    const firstDesc = (parent, localName) => Array.from(parent.querySelectorAll("*")).find(
+      el => (el.localName || el.tagName || "").toLowerCase() === localName.toLowerCase()
+    );
+
+    const settingsNodes = Array.from(doc.querySelectorAll("*")).filter(el =>
+      (el.localName || el.tagName || "").toLowerCase() === "jaxbanalysissettings"
+    );
+
+    settingsNodes.forEach(settings => {
+      const typeEl = firstDesc(settings, "Type");
+      const typeText = typeEl ? typeEl.textContent.trim() : "";
+      if (!/IDetectorSettings$/i.test(typeText)) return;
+
+      const values = {};
+      localChildren(settings, "JaxbSettingValue").forEach(settingValue => {
+        const nameEl = firstDesc(settingValue, "Name");
+        if (!nameEl) return;
+        const name = nameEl.textContent.trim();
+        const valueEl = Array.from(settingValue.querySelectorAll("*")).find(el =>
+          /^(DoubleValue|IntValue|IntegerValue|FloatValue|BooleanValue|StringValue)$/i.test(el.localName || el.tagName || "")
+        );
+        if (valueEl) values[name] = valueEl.textContent.trim();
+      });
+
+      const objectName = values.ObjectName || values.TargetName || values.DetectorName || "";
+      const rawThreshold = Number(values.Threshold);
+      if (!isFinite(rawThreshold) || rawThreshold <= 0) return;
+
+      if (/DEFAULT_SETTINGS/i.test(objectName)) {
+        result.defaultRaw = rawThreshold;
+        result.defaultScaled = rawThreshold * scaleFactor;
+      } else if (objectName) {
+        // Legacy SDS detector thresholds are stored in the same numeric scale as
+        // the reconstructed legacy dRn curves (commonly 10,000-25,000), so do
+        // not multiply target-specific values by the modern JSON scale factor.
+        result.byTarget[objectName] = rawThreshold;
+      }
+    });
+
+    if (Object.keys(result.byTarget).length) result.source = "analysis_protocol.xml";
+    else if (result.defaultScaled !== null) result.source = "analysis_protocol.xml (default)";
+
+    if (result.defaultScaled !== null) {
+      (targets || []).forEach(t => {
+        if (result.byTarget[t] === undefined) result.byTarget[t] = result.defaultScaled;
+      });
+    }
+  } catch(e) {}
+
+  return result;
+}
+
+async function extractThresholdsFromEds(zip, analysisSetting, targets, scaleFactor = 1){
+  const modern = extractEdsThresholds(analysisSetting, targets, scaleFactor);
+  const modernHasTargets = Object.keys(modern.byTarget || {}).length > 0;
+  if (modernHasTargets) {
+    return { ...modern, source: "analysis_setting.json" };
+  }
+
+  const legacyXml = await readXml(zip, /(?:^|\/)analysis_protocol\.xml$/i);
+  const legacy = extractLegacyXmlThresholds(legacyXml, targets, scaleFactor);
+  if (Object.keys(legacy.byTarget || {}).length > 0) return legacy;
+
+  return { ...modern, source: null };
 }
 
 function getThresholdForTarget(run, target){
@@ -914,7 +993,7 @@ async function parseEds(file){
   const instrumentType = normalizeInstrumentName(rawInstrument);
 
   const targetsInRun = [...new Set(rows.map(r => r.target))];
-  const edsThresholds = extractEdsThresholds(analysisSetting, targetsInRun, drnScaleFactor);
+  const edsThresholds = await extractThresholdsFromEds(zip, analysisSetting, targetsInRun, drnScaleFactor);
 
   const meta = {
     fileName: file.name,
@@ -931,7 +1010,8 @@ async function parseEds(file){
     cqStep: analysisSetting.cqAnalysisStepNumber || 2,
     cqMethod: analysisSetting.cqAlgorithmType || "BASELINE_THRESHOLD",
     edsThresholdRaw: edsThresholds.defaultRaw,
-    edsThresholdScaleFactor: drnScaleFactor
+    edsThresholdScaleFactor: drnScaleFactor,
+    edsThresholdSource: edsThresholds.source
   };
 
   return { meta, rows, ampRecords, edsThresholdMap: edsThresholds.byTarget };
@@ -1026,7 +1106,9 @@ function populateTargetAndSampleSelectors(){
     if (cqInfo) {
       if (confVals.length) {
         const lo = Math.min(...confVals), hi = Math.max(...confVals);
-        cqInfo.textContent = `Cq Conf active across ${confVals.length} reactions (${lo.toFixed(2)}–${hi.toFixed(2)}).`;
+        cqInfo.textContent = run.cqConfCutoff >= 1
+          ? "Cq Conf 1.00: all reactions are excluded."
+          : `Cq Conf active across ${confVals.length} reactions (${lo.toFixed(2)}–${hi.toFixed(2)}).`;
       } else {
         cqInfo.textContent = "No Cq confidence values detected in this run.";
       }
@@ -1055,9 +1137,10 @@ function populateTargetAndSampleSelectors(){
   if (hasEdsThreshold) {
     const raw = run.meta.edsThresholdRaw;
     const scale = run.meta.edsThresholdScaleFactor || 1;
+    const source = run.meta.edsThresholdSource ? ` from ${run.meta.edsThresholdSource}` : "";
     edsInfo.textContent = raw !== null && raw !== undefined
-      ? `EDS Ct threshold detected: ${raw}${scale !== 1 ? ` (plot scale: ${Number(raw * scale).toLocaleString()})` : ""}. Check the box to use it.`
-      : "Target-specific EDS thresholds detected. Check the box to use them.";
+      ? `EDS Ct threshold detected${source}: ${raw}${scale !== 1 ? ` (default plot scale: ${Number(raw * scale).toLocaleString()})` : ""}. Check the box to use it.`
+      : `Target-specific EDS thresholds detected${source}. Check the box to use them.`;
   } else {
     edsInfo.textContent = "No Ct threshold was found in this EDS file.";
   }
@@ -1134,10 +1217,14 @@ function renderPipelinePlot(rebuildSelectors = true){
   let dataset = run.rows.filter(r => !r.omitted);
 
   // Confidence Filter
-  if (cqConfCutoff > 0) {
+  // 0.00 = off (keep all reactions). Any positive cutoff requires a finite Cq Conf.
+  // 1.00 is treated as the strict upper bound and intentionally displays no reactions.
+  if (cqConfCutoff >= 1) {
+    dataset = [];
+  } else if (cqConfCutoff > 0) {
     dataset = dataset.filter(r => {
       const conf = Number(r.cqConf);
-      return Number.isFinite(conf) ? conf >= cqConfCutoff : true;
+      return Number.isFinite(conf) && conf >= cqConfCutoff;
     });
   }
 
@@ -1148,7 +1235,8 @@ function renderPipelinePlot(rebuildSelectors = true){
     r._effectiveCt = (ct !== null && isFinite(ct)) ? ct : (r.cq !== null && isFinite(r.cq) ? r.cq : null);
   });
 
-  // Maximum Ct Filter: Delete/Exclude targets completely if all their wells have Ct > cutoff
+  // Maximum Ct Filter: exclude reactions above the selected Ct cutoff.
+  // A target remains visible only when it has at least one reaction at or above the cutoff.
   if (maxCtCutoff < 45) {
     const validTargetsWithQualifyingCt = new Set();
     dataset.forEach(r => {
@@ -1157,8 +1245,11 @@ function renderPipelinePlot(rebuildSelectors = true){
       }
     });
 
-    // Keep only targets that have at least one qualifying reaction below cutoff
-    dataset = dataset.filter(r => validTargetsWithQualifyingCt.has(r.target) && r._effectiveCt !== null && r._effectiveCt <= maxCtCutoff);
+    dataset = dataset.filter(r =>
+      validTargetsWithQualifyingCt.has(r.target) &&
+      r._effectiveCt !== null &&
+      r._effectiveCt <= maxCtCutoff
+    );
   }
 
   const validTargets = [...new Set(dataset.map(r => r.target))].sort();
@@ -1415,11 +1506,11 @@ document.getElementById("cqConfSlider").addEventListener("input", e => {
   renderPipelinePlot(true);
 });
 
-// Max Ct Slider Listener
+// Maximum Ct Slider Listener
 document.getElementById("maxCtSlider").addEventListener("input", e => {
   const run = loadedRuns[activeRunIndex];
   if (!run) return;
-  const val = parseFloat(e.target.value) || 45;
+  const val = Math.max(0, Math.min(45, parseFloat(e.target.value) || 0));
   run.maxCtCutoff = val;
   document.getElementById("maxCtValue").textContent = val >= 45 ? "Off" : val.toFixed(1);
   renderPipelinePlot(true);
